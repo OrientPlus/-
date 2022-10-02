@@ -11,6 +11,7 @@
 #include <winsock2.h>
 #include <WS2tcpip.h>
 #include <string>
+#include "openssl/sha.h"
 
 using namespace std;
 
@@ -26,8 +27,14 @@ class Client {
 	string cmd, IP, port;
 	int buf_size, recvBuf_size;
 
-	string buffer, _exit = "exit";
+	string buffer, _exit = "exit", login, pass;
 	char* recvBuffer;
+	
+	unsigned char hash[32];
+	const unsigned char* src_hash;
+
+	int auth();
+
 public:
 	Client();
 	~Client();
@@ -54,19 +61,87 @@ Client::~Client()
 {
 }
 
+int Client::auth()
+{
+	int size_srcHash = 0, size_login =0, size_pass =0;
+	cout << "\nEnter the authorization data.";
+	cout << "\nlogin: ";
+	cin >> login;
+	size_login = login.size() + 1;
+	
+	//send login
+	result = send(ConnectSocket, (char*)&size_login, sizeof(int), NULL);
+	cout << "\nSended " << result << " bytes" << endl;
+	result = send(ConnectSocket, login.c_str(), size_login, NULL);
+	cout << "Sended " << result << " bytes" << endl;
+
+	cout << "\nPass: ";
+	cin >> pass;
+	size_pass = pass.size() + 1;
+
+	//get hash for password
+	src_hash = reinterpret_cast<const unsigned char*>(pass.c_str());
+	cout << "\n\tHashing...\n";
+	//SHA256(src_hash, size_srcHash, hash);
+	//puts(reinterpret_cast<const char*>(hash));
+
+	//send hash password
+	result = send(ConnectSocket, (char*)&size_pass, sizeof(int), NULL);
+	cout << "\nSended " << result << " bytes" << endl;
+	result = send(ConnectSocket, pass.c_str(), size_pass, NULL);
+	if (result == SOCKET_ERROR)
+	{
+		cout << "Send failed!" << endl;
+		return 0;
+	}
+	else 
+		cout << "Sended " << result << " bytes" << endl;
+
+	//get answer from server
+	recv(ConnectSocket, (char*)&recvBuf_size, sizeof(int), NULL);
+	recvBuffer = new char[recvBuf_size];
+	result = recv(ConnectSocket, recvBuffer, recvBuf_size, NULL);
+	if (result == SOCKET_ERROR)
+	{
+		cout << "Recovered failed!" << endl;
+		return 0;
+	}
+	if (recvBuffer == "successfully")
+	{
+		cout << "\nAuthorization was successful!";
+		return 1;
+	}
+	else {
+		cout << recvBuffer << endl;
+		login.clear();
+		delete[] recvBuffer;
+		auth();
+	}
+}
+
 int Client::header()
 {
+	if (auth() == false)
+	{
+		cout << "\nAuthorization error!" << endl;
+		closesocket(ConnectSocket);
+		freeaddrinfo(addrResult);
+		WSACleanup();
+		system("pause");
+		exit(10);
+	}
+
 	cin.ignore();
 	do {
-		cout << ":";
+		cout << "\n:";
 
 		buffer.clear();
 		getline(std::cin, buffer);
 		buf_size = buffer.size();
 		buffer[buf_size] == '\0';
 		buf_size++;
-
-		//если введена команда /exit - закрываем соединение и выходим
+		
+		//если введена команда exit - закрываем соединение и выходим
 		if (buffer == _exit)
 		{
 			if (shutdown(ConnectSocket, SD_BOTH) == SOCKET_ERROR)
@@ -84,7 +159,7 @@ int Client::header()
 		// -> отправляем размер буфера
 		// -> отправляем сам буфер
 
-		cout << "\t...send your data...\n";
+		//cout << "\t...send your data...\n";
 		send(ConnectSocket, (char*)&buf_size, sizeof(int), NULL);
 		result = send(ConnectSocket, buffer.c_str(), buf_size, NULL);
 		if (result == SOCKET_ERROR)
@@ -98,8 +173,7 @@ int Client::header()
 		}
 
 
-		//SecureZeroMemory(recvBuffer, recvBuf_size);
-		cout << "\n\t...getting data from server...\n";
+		//cout << "\n\t...getting data from server...\n";
 		recv(ConnectSocket, (char*)&recvBuf_size, sizeof(int), NULL);
 		recvBuffer = new char[recvBuf_size];
 		result = recv(ConnectSocket, recvBuffer, recvBuf_size, NULL);
@@ -175,5 +249,8 @@ void Client::init_client()
 		WSACleanup();
 		system("pause");
 		exit(1);
+	}
+	else {
+		cout << "\n\tSuccessfully connected to the server " << ConnectSocket << endl;
 	}
 }

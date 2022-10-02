@@ -11,6 +11,8 @@
 #include <array>
 #include <thread>
 
+#include <openssl/sha.h>
+
 
 //user levels
 #define USER "user"
@@ -19,8 +21,9 @@
 #define WORM "wrom"
 //user groups
 #define NONE "none"
+#define PRIORITY "priority"
 
-#define BUFFER_SIZE 10
+#define MAX_LOAD 5
 
 
 using namespace std;
@@ -29,25 +32,36 @@ class Server
 {
 private:
 	//структура в которой описаны поля статуса юзера, его группа, ip c которого он был создан
-	typedef struct {
+	typedef struct USERS {
 		string type_user = USER,
 			group = NONE,
-			IP = NONE;
-	} USERS[40];
+			ID = NONE,
+			login = NONE,
+			password = NONE,
+			home_path = NONE;
+		bool auth_token = false,
+			online = false;
+		int cur_sock;
+	};
+	USERS user[MAX_LOAD];
 	//матрица прав пользователей
 	array<array<string, 50>, 50> LawUser;
 
 	WSADATA wsaData;
 	ADDRINFO hints;
 	ADDRINFO* addrResult;
-	SOCKET ClientSocket[20], ListenSocket;
+	SOCKET ClientSocket[MAX_LOAD] = {INVALID_SOCKET}, ListenSocket;
 
-	thread *th[20];
+	thread th[MAX_LOAD];
 
 	int result, counter, buf_size, recvBuf_size;
-	char *buffer;
 	char *recvBuffer;
-	string cmd, IP, port, _buffer, _recvBuffer;
+	string  _buffer, command;
+
+	string supported_commands[22] = { "rr", "chmod", "help", "open", "close", "crF", "delete", 
+		"crD", "cd", "crGr", "delGr", "addUnG", "delUnG", "write", "read", "ls", "logout",
+	"crUser", "delUser", "chPUser", "chLUser", "listUser"};
+
 public:
 	Server();
 	~Server();
@@ -59,12 +73,17 @@ public:
 	int get_access();
 	int set_access();
 	//получить сведения о пользователе (его группа, статус)
+	int find_user(string login);
+	int find_user(int id);
 	int set_user();
 	int get_user();
 
-	int send_data();
-	void Client_header();
-	void static thread_starter(LPVOID that, int param);
+	int send_data(SOCKET &currentSocket, string cmd);
+	void Client_header(SOCKET &currentSocket, int ind);
+	void static thread_starter(LPVOID that, SOCKET sock, int counter);
+
+	int authorize(SOCKET currentSocket);
+	string pars_command(char *cmd);
 
 	void start();
 };
@@ -72,22 +91,32 @@ public:
 void Server::start()
 {
 	init();
-	header();
+	header(); 
+	return;
 }
 
 Server::Server()
 {
+	result = 0;
+	counter = 0;
 	buf_size = 0;
 	recvBuf_size = 0;
-	counter = 0;
+	recvBuffer = NULL;
 	addrResult = NULL;
 	ListenSocket = INVALID_SOCKET;
+
+	user[0].ID = NONE;
+	user[0].home_path = "/god/home";
+	user[0].login = "god";
+	user[0].password = "just_god";
+	user[0].type_user = GOD;
+	user[0].group = PRIORITY;
 };
 
 Server::~Server()
 {
 	delete[] recvBuffer;
-	delete[] buffer;
+	//delete[] buffer;
 }
 
 void Server::init()
@@ -149,71 +178,198 @@ void Server::init()
 
 void Server::header()
 {
-	counter++;
-	ClientSocket[counter] = accept(ListenSocket, NULL, NULL);
-	if (ClientSocket[counter] == INVALID_SOCKET)
+	SOCKET tempSock;
+	for (int i = 0; i < MAX_LOAD; i++)
 	{
-		cout << "Accepted error!" << endl;
-		closesocket(ClientSocket[0]);
-		freeaddrinfo(addrResult);
-		WSACleanup();
-		system("pause");
-		exit(1);
-	}
-	cout << "\nClient " << addrResult->ai_addr << " connected\n";
-
-	th[counter]->join();
-	//CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)thread_starter, this, NULL, NULL);
-	//Client_header();
-}
-
-void Server::thread_starter(LPVOID that, int param)
-{
-	return ((Server*)that)->Client_header();
-}
-
-void Server::Client_header()
-{
-	do {
-		cout << "\n\t...getting data from clent :: " << Server::addrResult->ai_addr << endl;
-		
-		//SecureZeroMemory(recvBuffer, recvBuf_size);
-		recv(ClientSocket[counter], (char*)&recvBuf_size, sizeof(int), NULL);
-		char* recvBuffer = new char[recvBuf_size];
-		result = recv(ClientSocket[counter], recvBuffer, recvBuf_size, NULL);
-			
-		if (result == SOCKET_ERROR)
+		ClientSocket[counter] = accept(ListenSocket, NULL, NULL);
+		if (ClientSocket[counter] == INVALID_SOCKET)
 		{
-			cout << "getting failed!" << endl;
-			closesocket(ClientSocket[counter]);
+			cout << "Accepted error!" << endl;
+			closesocket(ClientSocket[0]);
 			freeaddrinfo(addrResult);
 			WSACleanup();
 			system("pause");
 			exit(1);
 		}
+		cout << "\nClient " << ClientSocket[counter] << " connected\n";
+		tempSock = ClientSocket[counter];
+		th[counter] = thread(thread_starter, this, tempSock, counter);
+		counter++;
+	}
 
-		cout << recvBuffer << endl;
-		send_data();
+	for (int i = 0; i < MAX_LOAD; i++)
+		th[i].join();
+}
+
+void Server::thread_starter(LPVOID that, SOCKET sock, int counter)
+{
+	return ((Server*)that)->Client_header(sock, counter);
+}
+
+inline int Server::find_user(string login)
+{
+	for (int i = 0; i < MAX_LOAD; i++)
+	{
+		if (login == user[i].login)
+			return i;
+	}
+	return -1;
+}
+
+inline int Server::authorize(SOCKET currentSocket)
+{
+	string login, pass;
+
+	//get login
+	recv(currentSocket, (char*)&recvBuf_size, sizeof(int), NULL);
+	char* recvBuffer = new char[recvBuf_size];
+	result = recv(currentSocket, recvBuffer, recvBuf_size, NULL);
+	if (result == SOCKET_ERROR)
+	{
+		cout << "getting failed!" << endl;
+		closesocket(currentSocket);
+		freeaddrinfo(addrResult);
+		WSACleanup();
+		system("pause");
+		exit(1);
+	}
+	login = recvBuffer;
+	//--------------------
+	cout << "\nReceived => " << recvBuffer << " :: " << currentSocket << endl;
+	//-------------------
+	delete[] recvBuffer;
+
+
+	//get hash pass
+	recv(currentSocket, (char*)&recvBuf_size, sizeof(int), NULL);
+	recvBuffer = new char[recvBuf_size];
+	result = recv(currentSocket, recvBuffer, recvBuf_size, NULL);
+	if (result == SOCKET_ERROR)
+	{
+		cout << "getting failed!" << endl;
+		closesocket(currentSocket);
+		freeaddrinfo(addrResult);
+		WSACleanup();
+		system("pause");
+		exit(1);
+	}
+	pass = recvBuffer;
+
+	//--------------------
+	cout << "\nReceived => " << recvBuffer << " :: " << currentSocket << endl;
+	//-------------------
+	int ind = find_user(login);
+	if (ind == -1)
+	{
+		send_data(currentSocket, "ERROR! Invalid login! Try again.");
+		delete[] recvBuffer;
+		login.clear();
+		pass.clear();
+		result = SOCKET_ERROR;
+		ind = -1;
+		authorize(currentSocket);
+	}
+	else {
+		cout << "\nfinded with index " << ind << endl;
+	}
+
+	if (user[ind].password == pass)
+	{
+		send_data(currentSocket, "successfully");
+		user[ind].auth_token = true;
+		user[ind].cur_sock = currentSocket;
+		user[ind].online = true;
+		user[ind].type_user = USER;
+		return 1;
+	}
+	else
+	{
+		send_data(currentSocket, "ERROR! Wrong password! Try again.");
+		delete[] recvBuffer;
+		login.clear();
+		pass.clear();
+		result = SOCKET_ERROR;
+		ind = -1;
+		authorize(currentSocket);
+	}
+}
+
+inline string Server::pars_command(char *cmd)
+{
+	return 0;
+}
+
+void Server::Client_header(SOCKET &currentSocket, int ind)
+{
+	string cmd;
+	//связать структуру юзера с потоком
+	authorize(currentSocket);
+
+
+	do {
+		recv(currentSocket, (char*)&recvBuf_size, sizeof(int), NULL);
+		char* recvBuffer = new char[recvBuf_size];
+		result = recv(currentSocket, recvBuffer, recvBuf_size, NULL);
+			
+		if (result == SOCKET_ERROR)
+		{
+			cout << "getting failed!" << endl;
+			closesocket(ClientSocket[ind]);
+			freeaddrinfo(addrResult);
+			WSACleanup();
+			system("pause");
+			std::exit(1);
+		}
+
+		cout << recvBuffer << " :: " << currentSocket << endl;
+		//============================================================================
+		
+
+		//cmd = pars_command(recvBuffer);
+		cmd = "NONE";
+		//pars command
+		// autorize client
+		// pars command
+		// send data
+		//
+
+		send_data(currentSocket, cmd);
 		delete[] recvBuffer;
 	} while (true);
 }
 
-int Server::send_data()
+inline int Server::get_access()
 {
-	//pars_command();
-	_buffer = "Comman for clent!";
+	return 0;
+}
 
-	//отправляем данные по запросу клиента
-	cout << "\t...send data to client...\n";
+inline int Server::set_access()
+{
+	return 0;
+}
+
+inline int Server::set_user()
+{
+
+	return 0;
+}
+
+inline int Server::get_user()
+{
+	return 0;
+}
+
+int Server::send_data(SOCKET &currentSocket, string cmd)
+{
+	cout << "\tSENDING";
 
 	// -> отправляем размер буфера
 	// -> отправляем сам буфер
-
-	buf_size = _buffer.size();
-	_buffer[buf_size] = '\0';
+	buf_size = cmd.size();
+	cmd[buf_size] = '\0';
 	buf_size++;
-	send(ClientSocket[counter], (char*)&buf_size, sizeof(int), NULL);
-	result = send(ClientSocket[counter], _buffer.c_str(), buf_size, NULL);
+	send(currentSocket, (char*)&buf_size, sizeof(int), NULL);
+	result = send(currentSocket, cmd.c_str(), buf_size, NULL);
 	if (result == SOCKET_ERROR)
 	{
 		cout << "Send failed!" << endl;
@@ -222,5 +378,8 @@ int Server::send_data()
 		WSACleanup();
 		system("pause");
 		exit(1);
+	}
+	else {
+		cout << endl << currentSocket << " :: successfully\n";
 	}
 }
