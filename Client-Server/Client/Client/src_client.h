@@ -121,7 +121,7 @@ int Client::auth()
 
 int Client::header()
 {
-	if (auth() == false)
+	/*if (auth() == false)
 	{
 		cout << "\nAuthorization error!" << endl;
 		closesocket(ConnectSocket);
@@ -129,12 +129,11 @@ int Client::header()
 		WSACleanup();
 		system("pause");
 		exit(10);
-	}
+	}*/
 
+	cout << "\n:";
 	cin.ignore();
 	do {
-		cout << "\n:";
-
 		buffer.clear();
 		getline(std::cin, buffer);
 		buf_size = buffer.size();
@@ -177,7 +176,13 @@ int Client::header()
 		recv(ConnectSocket, (char*)&recvBuf_size, sizeof(int), NULL);
 		recvBuffer = new char[recvBuf_size];
 		result = recv(ConnectSocket, recvBuffer, recvBuf_size, NULL);
-		cout << recvBuffer << endl;
+		if (result < recvBuf_size)
+		{
+			cout << "\n\nWAITING ALL DATA\n";
+		}
+		cout << "#" << recvBuffer << " ";
+		if (recvBuffer == "disconnected")
+			break;
 		delete[] recvBuffer;
 		if (result == SOCKET_ERROR)
 			{
@@ -190,7 +195,6 @@ int Client::header()
 			}
 	} while (true);
 }
-
 
 void Client::init_client()
 {
