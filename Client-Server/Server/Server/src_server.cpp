@@ -555,7 +555,10 @@ inline void Server::set_level_access(int ind, string path, int access)
 	LMatrix.insert(make_pair<pair<string, string>, int>(make_pair<string, string>(user[ind].login.c_str(), path.c_str()), static_cast<int>(access)));
 
 	if (access / 10 % 10 != 0)
-		LMatrix.insert(make_pair<pair<string, string>, int>(make_pair<string, string>(user[ind].group.c_str(), path.c_str()), static_cast<int>(access))); //???????
+	{
+		for (int i = 0; i < user[ind].group.size(); i++)
+			LMatrix.insert(make_pair<pair<string, string>, int>(make_pair<string, string>(user[ind].group[i].c_str(), path.c_str()), static_cast<int>(access))); //???????
+	}
 	if (access % 100 != 0)
 		LMatrix.insert(make_pair<pair<string, string>, int>(make_pair<string, string>("OTHER GROUP", path.c_str()), static_cast<int>(access)));
 
