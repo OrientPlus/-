@@ -27,7 +27,7 @@ class Client {
 	string cmd, IP, port;
 	int buf_size, recvBuf_size;
 
-	string buffer, _exit = "exit", login, pass;
+	string buffer, login, pass;
 	char* recvBuffer;
 	
 	unsigned char hash[32];
@@ -121,16 +121,6 @@ int Client::auth()
 
 int Client::header()
 {
-	/*if (auth() == false)
-	{
-		cout << "\nAuthorization error!" << endl;
-		closesocket(ConnectSocket);
-		freeaddrinfo(addrResult);
-		WSACleanup();
-		system("pause");
-		exit(10);
-	}*/
-
 	cout << "\n:";
 	cin.ignore();
 	do {
@@ -140,25 +130,8 @@ int Client::header()
 		buffer[buf_size] == '\0';
 		buf_size++;
 		
-		//если введена команда exit - закрываем соединение и выходим
-		if (buffer == _exit)
-		{
-			if (shutdown(ConnectSocket, SD_BOTH) == SOCKET_ERROR)
-			{
-				cout << "Shutdown error!" << endl;;
-				closesocket(ConnectSocket);
-				freeaddrinfo(addrResult);
-				WSACleanup();
-				system("pause");
-				exit(1);
-			}
-			return 0;
-		}
-
 		// -> отправляем размер буфера
 		// -> отправляем сам буфер
-
-		//cout << "\t...send your data...\n";
 		send(ConnectSocket, (char*)&buf_size, sizeof(int), NULL);
 		result = send(ConnectSocket, buffer.c_str(), buf_size, NULL);
 		if (result == SOCKET_ERROR)
@@ -172,7 +145,6 @@ int Client::header()
 		}
 
 
-		//cout << "\n\t...getting data from server...\n";
 		recv(ConnectSocket, (char*)&recvBuf_size, sizeof(int), NULL);
 		recvBuffer = new char[recvBuf_size];
 		result = recv(ConnectSocket, recvBuffer, recvBuf_size, NULL);

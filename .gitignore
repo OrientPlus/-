@@ -70,3 +70,5 @@ dkms.conf
 *.txt
 *.vsidx
 *.lock
+Client-Server/Client/x64/Release/Client.exe
+Client-Server/Client/x64/Release/Server.exe

@@ -19,12 +19,11 @@
 
 
 //user levels
-#define USER "user"
-#define ADMIN "admin"
-#define GOD "god"
-#define WORM "worm"
+//#define USER "user"
+//#define ADMIN "admin"
+//#define GOD "god"
+//#define WORM "worm"
 //user groups
-#define NONE "none"
 #define PRIORITY "priority"
 
 #define MAX_LOAD 5
@@ -32,6 +31,15 @@
 
 #define MATRIX_LAW_PATH "LawMatrix.txt"
 #define USERS_DATA_PATH "usersData.txt"
+#define SERVER_ROOT_PATH "C:\\Users\\gutro\\Desktop\\server_root"
+
+#define OTHER_GROUP "other_group"
+#define DIR_FL 1
+#define FILE_FL 2
+
+#define ERROR_STR "error"
+#define INV_SYMBOL_IN_PATH -1
+
 
 
 using namespace std;
@@ -49,30 +57,33 @@ private:
 
 
 	//матрица прав пользователей / (login + path) -> access
-	map<pair<string, string>, int> LMatrix;
+	map<pair<string, string>, string> LMatrix;
+
+	enum { GOD, ADMIN, USER };
 
 	//структура описания пользователя
-	typedef struct USERS {
-		string type_user = USER,
-			ID = NONE,
-			login = NONE,
-			password = NONE,
-			home_path = NONE,
-			current_path = NONE;
+	class USERS {
+	public:
+		string login,
+			password,
+			home_path,
+			current_path;
 		vector<string> group;
-		bool auth_token = false,
-			reserv_token = false;
-		int cur_sock;
+		bool auth_token;
+		int cur_sock, status;
 	};
-	USERS user[MAX_LOAD];
+
+	
+	USERS *user;
+	USERS* reallocated(size_t size);
+	size_t users_count;
 
 	//стек свободных индексов для потоков
 	stack<int> free_index;
 
 	//вспомогательные переменные
 	bool save_matrix_flag = false;
-	int result, counter, buf_size, recvBuf_size,
-		users_count =0;
+	int result, counter, buf_size, recvBuf_size;
 	char *recvBuffer;
 	string  _buffer, command, cmd_buffer,
 		help_cmd;
@@ -114,14 +125,19 @@ private:
 	string get_opt(int n, int opt_count);
 	int send_data(SOCKET& currentSocket);
 	int send_data(SOCKET& currentSocket, string cmd);
+
+	int check_path(string& path, int fl);
+	string get_owner(string path);
 	
 	//функции работы с матрицей прав
-	int saveMatrixLaw();
+	void saveMatrixLaw();
 	int addUserInMatrixLaw(string login, string group);
 	int loadMatrixLaw();
 
-	int get_level_access(int ind, string path);
-	void set_level_access(int ind, string path, int access);
+	string get_level_access(int ind, string path);
+	void set_level_access(int ind, string path, string &access);
+	void change_level_access(int ind, string path, string& access);
+	void delete_level_access(int ind, string path);
 
 	//сохранение и загрузка структуры данных пользователей
 	int load_users_data();
