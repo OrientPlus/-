@@ -86,20 +86,19 @@ private:
 	int result, counter, buf_size, recvBuf_size;
 	char *recvBuffer;
 	string  _buffer, command, cmd_buffer,
-		help_cmd;
+		help_all_cmd, help_cmds[22];
 
-	string supported_commands[24] = { "auth", "rr", "chmod", "help", "open", "close", "crF", "del",
-		"crD", "cd", "crGr", "delGr", "addUnG", "delUnG", "write", "read", "ls", "logout",
-	"crUser", "delUser", "chPUser", "chLUser", "listUser", "reg"};
+	string supported_commands[22] = { "help", "reg", "auth", "rr", "write", "read",
+		"ls", "logout", "chmod", "crF", "crD", "del", "cd", "crGr", "delGr", "addUnG",
+	"delUnG", "crUser", "delUser", "chLUser", "chPUser", "listUser" };
 
 
 	//===================================команды поддерживаемые сервером для клиента===================================
 	int authorize(SOCKET currentSocket);
-	int reg(SOCKET& currentSocket);
+	int reg(SOCKET& currentSocket, int initiator);
 	int chmod(SOCKET &currentSocket);
 	int help(SOCKET& currentSocket);
-	int open(SOCKET& currentSocket);
-	int close(SOCKET& currentSocket);
+	int rr(SOCKET& currentSocket);
 	int createFile(SOCKET& currentSocket);
 	int deleteFD(SOCKET& currentSocket);
 	int createDirectory(SOCKET& currentSocket);
@@ -134,7 +133,7 @@ private:
 	int addUserInMatrixLaw(string login, string group);
 	int loadMatrixLaw();
 
-	string get_level_access(int ind, string path);
+	string get_level_access(int ind, string path, bool INFO_FL);
 	void set_level_access(int ind, string path, string &access);
 	void change_level_access(int ind, string path, string& access);
 	void delete_level_access(int ind, string path);

@@ -22,8 +22,7 @@ class Client {
 	SOCKET ConnectSocket;
 	
 	int result;
-	//char buffer[BUFFER_SIZE];
-	//char recvBuffer[BUFFER_SIZE];
+
 	string cmd, IP, port;
 	int buf_size, recvBuf_size;
 
@@ -63,39 +62,31 @@ Client::~Client()
 
 int Client::auth()
 {
-	int size_srcHash = 0, size_login =0, size_pass =0;
+	int size = 0;
 	cout << "\nEnter the authorization data.";
 	cout << "\nlogin: ";
 	cin >> login;
-	size_login = login.size() + 1;
-	
-	//send login
-	result = send(ConnectSocket, (char*)&size_login, sizeof(int), NULL);
-	cout << "\nSended " << result << " bytes" << endl;
-	result = send(ConnectSocket, login.c_str(), size_login, NULL);
-	cout << "Sended " << result << " bytes" << endl;
 
 	cout << "\nPass: ";
 	cin >> pass;
-	size_pass = pass.size() + 1;
+	
+	size = pass.size();
+	SHA512(reinterpret_cast<const unsigned char*>(pass.c_str()), size, reinterpret_cast<unsigned char*>(const_cast<char*>(pass.c_str()))); //unsigned char* ---> const char* 
+	cout << pass << endl;
+	system("pause");
 
-	//get hash for password
-	src_hash = reinterpret_cast<const unsigned char*>(pass.c_str());
-	cout << "\n\tHashing...\n";
-	//SHA256(src_hash, size_srcHash, hash);
-	//puts(reinterpret_cast<const char*>(hash));
-
+	string auth_command = "auth " + login + " " + pass;
 	//send hash password
-	result = send(ConnectSocket, (char*)&size_pass, sizeof(int), NULL);
-	cout << "\nSended " << result << " bytes" << endl;
-	result = send(ConnectSocket, pass.c_str(), size_pass, NULL);
+
+	size = auth_command.size();
+	result = send(ConnectSocket, (char*)&size, sizeof(int), NULL);
+	//cout << "\nSended " << result << " bytes" << endl;
+	result = send(ConnectSocket, pass.c_str(), size, NULL);
 	if (result == SOCKET_ERROR)
 	{
 		cout << "Send failed!" << endl;
 		return 0;
 	}
-	else 
-		cout << "Sended " << result << " bytes" << endl;
 
 	//get answer from server
 	recv(ConnectSocket, (char*)&recvBuf_size, sizeof(int), NULL);
@@ -106,22 +97,26 @@ int Client::auth()
 		cout << "Recovered failed!" << endl;
 		return 0;
 	}
-	if (recvBuffer == "successfully")
+	if (recvBuffer[0] != 'E')
 	{
-		cout << "\nAuthorization was successful!";
+		cout << "\nAuthorization was successful!\n";
+		cout << recvBuffer << " ";
 		return 1;
 	}
 	else {
-		cout << recvBuffer << endl;
-		login.clear();
-		delete[] recvBuffer;
-		auth();
+		return 0;
 	}
 }
 
 int Client::header()
 {
 	cout << "\n:";
+	//cin.ignore();
+	bool _auth = false;
+	while (!_auth)
+	{
+		_auth = auth();
+	}
 	cin.ignore();
 	do {
 		buffer.clear();
@@ -129,7 +124,7 @@ int Client::header()
 		buf_size = buffer.size();
 		buffer[buf_size] == '\0';
 		buf_size++;
-		
+
 		// -> отправляем размер буфера
 		// -> отправляем сам буфер
 		send(ConnectSocket, (char*)&buf_size, sizeof(int), NULL);
@@ -152,7 +147,8 @@ int Client::header()
 		{
 			cout << "\n\nWAITING ALL DATA\n";
 		}
-		cout << "#" << recvBuffer << " ";
+
+		cout << recvBuffer << " ";
 		if (recvBuffer == "disconnected")
 			break;
 		delete[] recvBuffer;

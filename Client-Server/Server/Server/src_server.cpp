@@ -161,8 +161,30 @@ Server::Server()
 	//определяем свободные индексы для массива потоков
 	for (int i = MAX_LOAD - 1; i >= 0; i--)
 		free_index.push(i);
+	help_cmds[0] = "\n\t* help - displays help about commands. Parameters: help [command] \nIf the option is not set, it displays information about all commands";
+	help_cmds[1] = "\n\t* reg - Registers a new client on the server with minimal rights. \nParameters: reg [login] [password]";
+	help_cmds[2] = "\n\t* auth - authorization command. Parameters: auth [login] [password]";
+	help_cmds[3] = "\n\t* rr - Returns the user's rights to a specific file. \nParameters: rr [filename]";
+	help_cmds[4] = "\n\t* write - the command to write to a file. Parameters: write [file_name] [text]";
+	help_cmds[5] = "\n\t* read - a command to read from a file. Parameters: write [file_name]";
+	help_cmds[6] = "\n\t* ls - directory listing command. Parameters: ls [dir]; \nif no parameters are specified, the current directory is listed.";
+	help_cmds[7] = "\n\t* logout - the command to disconnect from the server. Has no parameters";
+	help_cmds[8] = "\n\t* chmod - command to set file/directory permissions. \nParameters: chmod [file name] [access value]\nExample: chmod user/home/file1.txt 777";
+	help_cmds[9] = "\n\t* crF - creates a file with the specified name. Parameters: crF [file_name]";
+	help_cmds[10] = "\n\t* crD - creates a directory with the specified name. Parameters: crD [path/dir_name] [rights]\nIf the path is not specified, creates in the current directory.";
+	help_cmds[11] = "\n\t* del - deletes the file or directory with the specified name, if the user has the rights to do so. \nParameters: rf [file_name/directory]";
+	help_cmds[12] = "\n\t* cd - go to the specified directory. Parameters: cd [path]";
+	help_cmds[13] = "\n\t* crGr - create a group with the specified access rights. \nThe user who created this group is included in it by default. \nParameters: crGr [gr_name] [law for other user] [users who included in group]";
+	help_cmds[14] = "\n\t* delGr - deletes the specified group if the user has the rights to do so. \nParameters: delGr [gr_name]";
+	help_cmds[15] = "\n\t* addUnG - add user in group";
+	help_cmds[16] = "\n\t* delUnG - del user in group";
+	help_cmds[17] = "\n\t* crUser - the user creation command. Parameters: crUser [user_name] [user_password]";
+	help_cmds[18] = "\n\t* delUser - the user deletion command. If a user with such a login is found, \nit deletes it, as well as its files and directories. \nParameters: delUser [user_login]";
+	help_cmds[19] = "\n\t* chLUser - the command for setting user rights. Determines the user's access level on the server. \nParameters: chLUser [option]. \nPossible access levels: ADMIN, USER, WORM";
+	help_cmds[20] = "\n\t* chPUser - ???";
+	help_cmds[21] = "\n\t* listUser - get information about all users. Has no parameters.";
 
-	help_cmd = "Supported commands:\
+	help_all_cmd = "Supported commands:\
 \n\t* help - displays help about commands. Parameters: help [command] \nIf the option is not set, it displays information about all commands\
 \n\t* reg - Registers a new client on the server with minimal rights. \nParameters: reg [login] [password]\
 \n\t* auth - authorization command. Parameters: auth [login] [password]\
@@ -197,10 +219,8 @@ Server::~Server()
 int Server::close_client(SOCKET& currentSocket, int thread_ind, int client_ind) 
 {
 	user[client_ind].auth_token = false;
-	save_users_data();
 	shutdown(currentSocket, NULL);
 	closesocket(currentSocket);
-	//th[thread_ind].~thread();
 	return 0;
 }
 
@@ -340,7 +360,7 @@ inline int Server::authorize(SOCKET currentSocket)
 	ind = find_user(login);
 	if (user[ind].auth_token == true)
 	{
-		send_data(currentSocket, "This user is already logged in to another thread!\n");
+		send_data(currentSocket, "ERROR! This user is already logged in to another thread!\n");
 		return -1;
 	}
 	if (ind == -1)
@@ -411,106 +431,107 @@ inline int Server::pars_command(SOCKET& currentSocket, int th_id)
 
 	switch (switch_on)
 	{
-	case 0:
+	case 2:
 		ret = authorize(currentSocket);
 		return ret;
-	case 1:
-		ret = send_data(currentSocket, "This command is not supported in the current version of the server! I'm working on it :)\n");
+	case 3:
+		ret = rr(currentSocket);
+		//ret = send_data(currentSocket, "This command is not supported in the current version of the server! I'm working on it :)\n");
 		return ret;
-	case 2:
+	case 8:
 		if (logged_in(currentSocket))
 			ret = chmod(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 3:
+	case 0:
 		ret = help(currentSocket);
 		return ret;
-	case 4:
+	case -11111:
 		send_data(currentSocket, "This command is not supported in the current version of the server! I'm working on it :)\n");
 		return 0;
-	case 5:
+	case -1111:
 		send_data(currentSocket, "This command is not supported in the current version of the server! I'm working on it :)\n");
 		return 0;
-	case 6:
+	case 9:
 		if (logged_in(currentSocket))
 			ret = createFile(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 7:
+	case 11:
 		if (logged_in(currentSocket))
 			ret = deleteFD(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 8:
+	case 10:
 		if (logged_in(currentSocket))
 			ret = createDirectory(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 9:
+	case 12:
 		if (logged_in(currentSocket))
 			ret = cd(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 10:
+	case 13:
 		if (logged_in(currentSocket))
 			ret = createGroup(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 11:
+	case 14:
 		if (logged_in(currentSocket))
 			ret = deleteGroup(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 12:
+	case 15:
 		if (logged_in(currentSocket))
 			ret = addUserInGroup(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 13:
+	case 16:
 		if (logged_in(currentSocket))
 			ret = deleteUserInGroup(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 14:
+	case 4:
 		if (logged_in(currentSocket))
 			ret = write(currentSocket); 
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 15:
+	case 5:
 		if (logged_in(currentSocket))
 			ret = read(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 16:
+	case 6:
 		if (logged_in(currentSocket))
 			ret = ls(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 17:
+	case 7:
 		if (logged_in(currentSocket))
 			ret = logout(currentSocket, th_id);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 18:
+	case 17:
 		if (logged_in(currentSocket))
 			ret = createUser(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 19:
+	case 18:
 		if (logged_in(currentSocket))
 			ret = deleteUser(currentSocket);
 		else
@@ -522,20 +543,20 @@ inline int Server::pars_command(SOCKET& currentSocket, int th_id)
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 21:
+	case 19:
 		if (logged_in(currentSocket))
 			ret = changeLUser(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 22:
+	case 21:
 		if (logged_in(currentSocket))
 			ret = listUser(currentSocket);
 		else
 			send_data(currentSocket, "To execute this command, you need to log in!");
 		return ret;
-	case 23:
-		ret = reg(currentSocket);
+	case 1:
+		ret = reg(currentSocket, USER);
 		return ret;
 	default:
 		return -10;
@@ -585,7 +606,7 @@ void Server::Client_header(SOCKET& currentSocket, int ind)
 	} while (true);
 }
 
-inline string Server::get_level_access(int ind, string path)
+inline string Server::get_level_access(int ind, string path, bool INFO_FL)
 {
 	//проверяем, существует ли директория, по которой необходимо получить значение доступа
 	string temp_path = path;
@@ -631,11 +652,15 @@ inline string Server::get_level_access(int ind, string path)
 			}
 		}
 	}
-
 	if (access.empty())
 	{
 		cout << "\n\t\t\t\aInternal server error! The access rights value for this key was not found!\n";
 		return "0";
+	}
+	if (INFO_FL)
+	{
+		string _access = access.erase(3);
+		return _access;
 	}
 
 	string owner, _gr;
@@ -900,7 +925,7 @@ inline int Server::send_data(SOCKET& currentSocket)
 	}
 }
 
-int Server::reg(SOCKET& currentSocket)
+int Server::reg(SOCKET& currentSocket, int initiator)
 {
 	string log, pass;
 	log.reserve(10); 
@@ -964,14 +989,27 @@ int Server::reg(SOCKET& currentSocket)
 	users_count++;
 	user = reallocated(users_count);
 	
-	user[users_count - 1].auth_token = true;
-	user[users_count - 1].current_path = '\\' + log + "\\home";
-	user[users_count - 1].cur_sock = currentSocket;
-	user[users_count - 1].home_path = '\\' + log + "\\home";
-	user[users_count - 1].login = log;
-	user[users_count - 1].password = pass;
-	user[users_count - 1].status = USER;
-	user[users_count - 1].group.push_back(user[users_count - 1].login);
+	if (initiator > USER)
+	{
+		user[users_count - 1].auth_token = false;
+		user[users_count - 1].current_path = '\\' + log + "\\home";
+		user[users_count - 1].cur_sock = NULL;
+		user[users_count - 1].home_path = '\\' + log + "\\home";
+		user[users_count - 1].login = log;
+		user[users_count - 1].password = pass;
+		user[users_count - 1].status = USER;
+		user[users_count - 1].group.push_back(user[users_count - 1].login);
+	}
+	else {
+		user[users_count - 1].auth_token = true;
+		user[users_count - 1].current_path = '\\' + log + "\\home";
+		user[users_count - 1].cur_sock = currentSocket;
+		user[users_count - 1].home_path = '\\' + log + "\\home";
+		user[users_count - 1].login = log;
+		user[users_count - 1].password = pass;
+		user[users_count - 1].status = USER;
+		user[users_count - 1].group.push_back(user[users_count - 1].login);
+	}
 
 	fs::create_directories(SERVER_ROOT_PATH + user[users_count - 1].current_path);
 	string access = "700" + user[users_count - 1].login + "/" + user[users_count - 1].login,
@@ -1004,7 +1042,7 @@ int Server::chmod(SOCKET& currentSocket)
 	else
 		path += user[ind].current_path + "\\" + opt[0];
 
-	string access = get_level_access(ind, path);
+	string access = get_level_access(ind, path, false);
 
 	login_owner = get_owner(path);
 	if (access[0] == '4' || access[0] == '7' || access[0] == '6' || access[0] == '5')
@@ -1044,9 +1082,44 @@ string Server::get_owner(string path)
 
 int Server::help(SOCKET& currentSocket)
 {
-	string str = help_cmd + '\n' + user[find_user(currentSocket)].current_path;
-	send_data(currentSocket, str);
-	return 0;
+	int ind = find_user(currentSocket);
+	if (cmd_buffer.size() == 0)
+	{
+		if (ind != -1)
+			send_data(currentSocket, help_all_cmd + "\n#" + user[ind].current_path);
+		else
+			send_data(currentSocket, help_all_cmd + "\n");
+		return 0;
+	}
+	string opt = get_opt(0, 1),
+		result;
+	if (opt == ERROR_STR)
+	{
+		send_data(currentSocket, "ERROR! Incorrect command options!\n#" + user[ind].current_path);
+		return 0;
+	}
+
+	result.reserve(50);
+	for (int i = 0; i < 22; i++)
+	{
+		if (opt == supported_commands[i])
+		{
+			result = help_cmds[i];
+			if (ind != -1)
+				send_data(currentSocket, result + "\n#" + user[ind].current_path);
+			else
+				send_data(currentSocket, result + "\n");
+			return 0;
+		}
+		else if (i == 21)
+		{
+			if (ind != -1)
+				send_data(currentSocket, "The server does not support such a command!\n#" + user[ind].current_path);
+			else
+				send_data(currentSocket, "The server does not support such a command!\n");
+			return 0;
+		}
+	}
 }
 
 int Server::createFile(SOCKET& currentSocket)
@@ -1078,7 +1151,7 @@ int Server::createFile(SOCKET& currentSocket)
 		return 0;
 	}
 
-	string access = get_level_access(ind, path);
+	string access = get_level_access(ind, path, false);
 	ofstream file;
 
 	if (access == "0" || access == "1" || access == "4" || access == "5")
@@ -1156,7 +1229,7 @@ int Server::deleteFD(SOCKET& currentSocket)
 		send_data(currentSocket, "ERROR! A directory with this name does not exist!\n" + user[ind].current_path);
 		return 0;
 	}
-	string access = get_level_access(ind, path);
+	string access = get_level_access(ind, path, false);
 	if (access == "0" || access == "1" || access == "4" || access == "5")
 	{
 		send_data(currentSocket, "ERROR! You don't have access rights!\n" + user[ind].current_path);
@@ -1215,7 +1288,7 @@ int Server::createDirectory(SOCKET& currentSocket)
 		return 0;
 	}
 	//наличие прав на создание в этой директории
-	string access = get_level_access(ind, path);
+	string access = get_level_access(ind, path, false);
 
 	if (access == "0" || access == "1" || access == "4" || access == "5")
 	{
@@ -1292,10 +1365,16 @@ int Server::cd(SOCKET& currentSocket)
 			send_data(currentSocket, "ERROR! Incorrect command options!\n#" + user[ind].current_path);
 			return 0;
 		}
+		if (check_path(opt, DIR_FL) == INV_SYMBOL_IN_PATH)
+		{
+			send_data(currentSocket, "ERROR! Invalid symbol in the directory name!\n" + user[ind].current_path);
+			return 0;
+		}
 		if (opt[0] == '\\')
 			path += opt;
 		else
 			path += user[ind].current_path + "\\" + opt;
+
 		//проверить существование такой директории
 		if (fs::exists(path) == false)
 		{
@@ -1303,7 +1382,7 @@ int Server::cd(SOCKET& currentSocket)
 			return 0;
 		}
 		//проверить доступ к директории в матрице прав
-		string access = get_level_access(ind, path);
+		string access = get_level_access(ind, path, false);
 		
 		if (access == "4" || access == "7" || access == "6" || access == "5")
 		{
@@ -1321,6 +1400,19 @@ int Server::cd(SOCKET& currentSocket)
 
 int Server::createGroup(SOCKET& currentSocket)
 {
+	int ind = find_user(currentSocket);
+	if (user[ind].status < ADMIN)
+	{
+		send_data(currentSocket, "ERROR! Not enough permissions to execute this command!\n#" + user[ind].current_path);
+		return 0;
+	}
+	string opt = get_opt(0, 1);
+	if (opt == ERROR_STR)
+	{
+		send_data(currentSocket, "ERROR! Incorrect command options!\n#" + user[ind].current_path);
+		return 0;
+	}
+
 	return 0;
 }
 
@@ -1341,11 +1433,116 @@ int Server::deleteUserInGroup(SOCKET& currentSocket)
 
 int Server::write(SOCKET& currentSocket)
 {
+	string data, file_name;
+
+	//нужно написать другие функции получения аргументов для этой команды; дефолтные некорректно работают
+	file_name = get_opt(0, 2);
+	data = get_opt(1, 2);
+
+	int ind = find_user(currentSocket);
+	if (data == ERROR_STR || file_name == ERROR_STR)
+	{
+		send_data(currentSocket, "ERROR! Incorrect command options!\n#" + user[ind].current_path);
+		return 0;
+	}
+	if (check_path(file_name, FILE_FL) == INV_SYMBOL_IN_PATH)
+	{
+		send_data(currentSocket, "ERROR! Invalid symbol in the file name!\n" + user[ind].current_path);
+		return 0;
+	}
+
+	string path = SERVER_ROOT_PATH;
+	if (file_name[0] == '\\')
+		path += file_name;
+	else
+		path += user[ind].current_path + "\\" + file_name;
+	//проверить существование такого файла
+	if (fs::exists(path) == false)
+	{
+		send_data(currentSocket, "ERROR! A file with this name already exists!\n#" + user[ind].current_path);
+		return 0;
+	}
+	//проверить доступ к файлу в матрице прав
+	string access = get_level_access(ind, path, false);
+	if (access == "2" || access == "3" || access == "6" || access == "7")
+	{
+		fstream file;
+		file.open(file_name, ios::app);
+		if (!file.is_open())
+		{
+			send_data(currentSocket, "Internal server error! Couldn't open the file " + file_name + "\n#" + user[ind].current_path);
+			return 0;
+		}
+		file << data;
+		file.close();
+		send_data(currentSocket, "successfull!\n#" + user[ind].current_path);
+	}
+	else
+	{
+		send_data(currentSocket, "ERROR! You don't have write access to this file!\n#" + user[ind].current_path);
+		return 0;
+	}
+
 	return 0;
 }
 
 int Server::read(SOCKET& currentSocket)
 {
+	string data, file_name, tmp;
+	file_name = get_opt(0, 1);
+
+	int ind = find_user(currentSocket);
+	if (file_name == ERROR_STR)
+	{
+		send_data(currentSocket, "ERROR! Incorrect command options!\n#" + user[ind].current_path);
+		return 0;
+	}
+	if (check_path(file_name, FILE_FL) == INV_SYMBOL_IN_PATH)
+	{
+		send_data(currentSocket, "ERROR! Invalid symbol in the file name!\n" + user[ind].current_path);
+		return 0;
+	}
+
+	string path = SERVER_ROOT_PATH;
+	if (file_name[0] == '\\')
+		path += file_name;
+	else
+		path += user[ind].current_path + "\\" + file_name;
+	//проверить существование такого файла
+	if (fs::exists(path) == false)
+	{
+		send_data(currentSocket, "ERROR! A file with this name already exists!\n#" + user[ind].current_path);
+		return 0;
+	}
+
+	//проверить доступ к файлу в матрице прав
+	string access = get_level_access(ind, path, false);
+	if (access == "2" || access == "3" || access == "6" || access == "7")
+	{
+		fstream file;
+		file.open(file_name, ios::in);
+		if (!file.is_open())
+		{
+			send_data(currentSocket, "Internal server error! Couldn't open the file " + file_name + "\n#" + user[ind].current_path);
+			return 0;
+		}
+		data.reserve(1000);
+		tmp.reserve(100);
+		while (!file.eof())
+		{
+			file >> tmp;
+			data += tmp;
+		}
+		file.close();
+		send_data(currentSocket, data + "\n#" + user[ind].current_path);
+		return 0;
+	}
+	else
+	{
+		send_data(currentSocket, "ERROR! You don't have read access to this file!\n#" + user[ind].current_path);
+		return 0;
+	}
+
 	return 0;
 }
 
@@ -1355,7 +1552,6 @@ int Server::ls(SOCKET& currentSocket)
 	vector<string> box; 
 	string path, opt;
 	int ind = find_user(currentSocket);
-	bool rec_flag = false;
 
 	path.reserve(50);
 	path = SERVER_ROOT_PATH;
@@ -1367,14 +1563,20 @@ int Server::ls(SOCKET& currentSocket)
 			send_data(currentSocket, "ERROR! Incorrect command options!\n#" + user[ind].current_path);
 			return 0;
 		}
-		rec_flag = true;
 
-		path += user[ind].current_path;
-		//path = SERVER_ROOT_PATH + opt;
+		if (opt[0] == '\\')
+			path += opt;
+		else
+			path += user[ind].current_path + '\\' + opt;
 	}
 	else
 		path += user[ind].current_path;
 
+	if (check_path(opt, DIR_FL) == INV_SYMBOL_IN_PATH)
+	{
+		send_data(currentSocket, "ERROR! Invalid symbol in the directory name!\n" + user[ind].current_path);
+		return 0;
+	}
 
 	if (!fs::exists(path))
 	{
@@ -1383,26 +1585,20 @@ int Server::ls(SOCKET& currentSocket)
 	}
 
 	string erase_temp, out_str;
-	if (rec_flag)
+	out_str.reserve(100);
+	
+	for (auto const& dir_entry : std::filesystem::directory_iterator{ path })
 	{
-		for (auto const& dir_entry : std::filesystem::recursive_directory_iterator{ path })
+		erase_temp = dir_entry.path().string();
+		for (int i = 0; i < erase_temp.size(); i++)
 		{
-			erase_temp = dir_entry.path().string();
-			erase_temp.erase(0, 35 + user[ind].current_path.size());
-			out_str += "\n" + erase_temp;
+			if (i >= 40)
+				out_str.insert(out_str.end(), erase_temp[i]);
 		}
-	}
-	else
-	{
-		for (auto const& dir_entry : std::filesystem::directory_iterator{ path })
-		{
-			erase_temp = dir_entry.path().string();
-			erase_temp.erase(erase_temp.find(SERVER_ROOT_PATH));
-			out_str += "\n" + erase_temp;
-		}
+		out_str.insert(out_str.end(), '\n');
 	}
 
-	send_data(currentSocket, out_str + "\n#" + user[ind].current_path);
+	send_data(currentSocket, out_str + "\n\n#" + user[ind].current_path);
 
 	return 0;
 }
@@ -1415,6 +1611,7 @@ int Server::logout(SOCKET& currentSocket, int th_id)
 	//закрываем клиентский сокет
 	close_client(currentSocket, th_id, cl_id);
 
+	//сохраняем данные юзеров
 	save_users_data();
 
 	//добавляем освободившийся индекс в стек
@@ -1424,18 +1621,74 @@ int Server::logout(SOCKET& currentSocket, int th_id)
 
 int Server::createUser(SOCKET& currentSocket)
 {
+	int ind = find_user(currentSocket);
+	if (user[ind].status < ADMIN)
+	{
+		send_data(currentSocket, "ERROR! To execute this command, you must have an ADMIN access level and higher.\n#" + user[ind].current_path);
+		return 0;
+	}
+	reg(currentSocket, user[ind].status);
+
 	return 0;
 }
 
 int Server::deleteUser(SOCKET& currentSocket)
 {
+	int ind = find_user(currentSocket);
+	if (user[ind].status < ADMIN)
+	{
+		send_data(currentSocket, "ERROR! To execute this command, you must have an ADMIN access level and higher.\n#" + user[ind].current_path);
+		return 0;
+	}
+
+	string login = get_opt(0, 1);
+	if (login == ERROR_STR)
+	{
+		send_data(currentSocket, "ERROR! Incorrect command options!\n#" + user[ind].current_path);
+		return 0;
+	}
+	int del_ind = find_user(login);
+	if (del_ind == -1)
+	{
+		send_data(currentSocket, "ERROR! There is no user with this username!\n#" + user[ind].current_path);
+		return 0;
+	}
+	
+
+
 	return 0;
 }
 
 int Server::changePUser(SOCKET& currentSocket)
 {
+	int ind = find_user(currentSocket);
+	if (user[ind].status < ADMIN)
+	{
+		send_data(currentSocket, "ERROR! To execute this command, you must have an ADMIN access level and higher.\n#" + user[ind].current_path);
+		return 0;
+	}
+
+	string login = get_opt(0, 2),
+		pass = get_opt(1, 2);
+
+	if (login == ERROR_STR || pass == ERROR_STR)
+	{
+		send_data(currentSocket, "ERROR! Incorrect command options!\n#" + user[ind].current_path);
+		return 0;
+	}
+	int user_ind = find_user(login);
+	if (user_ind == -1)
+	{
+		send_data(currentSocket, "ERROR! There is no user with this username!\n#" + user[ind].current_path);
+		return 0;
+	}
+
+	//change password
+	user[user_ind].password = pass;
+
 	return 0;
-}
+
+} 
 
 int Server::changeLUser(SOCKET& currentSocket)
 {
@@ -1444,6 +1697,37 @@ int Server::changeLUser(SOCKET& currentSocket)
 
 int Server::listUser(SOCKET& currentSocket)
 {
+	int ind = find_user(currentSocket);
+	if (user[ind].status < ADMIN)
+	{
+		send_data(currentSocket, "ERROR! To execute this command, you must have an ADMIN access level and higher.\n#" + user[ind].current_path);
+		return 0;
+	}
+	string result;
+
+	result.reserve(300);
+	for (int i = 1; i < users_count; i++)
+	{
+		result += "\nLOGIN: " + user[i].login;
+		if (user[i].status == USER)
+			result += "\nSTATUS: user";
+		else if (user[i].status == ADMIN)
+			result += "\nSTATUS: admin";
+		if (user[i].auth_token)
+			result += "\nAUTHORIZE: authorize";
+		else
+			result += "\nAUTHORIZE: not authorize ";
+
+		result += "\nCURR. SOCKET: " +  to_string(user[i].cur_sock);
+		result += "\nUSERS GROUPS : ";
+		for (int j = 0; j < user[i].group.size(); j++)
+		{
+			result += user[ind].group[j] + " ";
+		}
+		result += "\n-------------------\n";
+	}
+
+	send_data(currentSocket, result + "\n#" + user[ind].current_path);
 	return 0;
 }
 
@@ -1525,4 +1809,39 @@ int Server::check_path(string& path, int fl)
 	}
 
 	return -10;
+}
+
+int Server::rr(SOCKET& currentSocket)
+{
+	int ind = find_user(currentSocket);
+	string fname = get_opt(0, 1), 
+		path = SERVER_ROOT_PATH;
+
+	if (fname == ERROR_STR)
+	{
+		send_data(currentSocket, "ERROR! Incorrect command options!\n" + user[ind].current_path);
+		return 0;
+	}
+	if (check_path(fname, FILE_FL) == INV_SYMBOL_IN_PATH)
+	{
+		send_data(currentSocket, "ERROR! Invalid symbol in the directory name!\n" + user[ind].current_path);
+		return 0;
+	}
+
+	if (fname[0] == '\\')
+		path += fname;
+	else
+		path += user[ind].current_path + '\\' + fname;
+
+	//существование директории с таким именем
+	if (!fs::exists(path))
+	{
+		send_data(currentSocket, "ERROR! There is no directory/file on this path!\n" + user[ind].current_path);
+		return 0;
+	}
+
+	string access = get_level_access(ind, path, true);
+	
+	send_data(currentSocket, "Access rights for this path: " + access + "\n#" + user[ind].current_path);
+	return 0;
 }
