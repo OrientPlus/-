@@ -20,13 +20,9 @@
 #include <openssl/sha.h>
 
 
-//user levels
-//#define USER "user"
-//#define ADMIN "admin"
-//#define GOD "god"
-//#define WORM "worm"
-//user groups
+
 #define PRIORITY "priority"
+#define OTHER_GROUP "other_group"
 
 #define MAX_LOAD 5
 #define CMD_COUNT 24;
@@ -35,12 +31,12 @@
 #define USERS_DATA_PATH "usersData.txt"
 #define SERVER_ROOT_PATH "C:\\Users\\gutro\\Desktop\\server_root"
 
-#define OTHER_GROUP "other_group"
 #define DIR_FL 1
 #define FILE_FL 2
 
-#define ERROR_STR "error"
 #define INV_SYMBOL_IN_PATH -1
+#define EXIT -10
+#define INV_CMD -30
 
 
 
@@ -71,13 +67,13 @@ private:
 			home_path,
 			current_path;
 		vector<string> group;
-		bool auth_token;
-		int cur_sock, status;
+		bool auth_token, del_tocken;
+		int cur_sock, status, th_id;
 	};
 
 
 	USERS* user;
-	USERS* reallocated(size_t size);
+	USERS* reallocated(int size);
 	size_t users_count;
 
 	//стек свободных индексов для потоков
@@ -85,7 +81,8 @@ private:
 
 	//вспомогательные переменные
 	bool save_matrix_flag = false;
-	int result, counter, buf_size, recvBuf_size;
+	int result, counter, buf_size, recvBuf_size,
+		err_val1, err_val2;
 	char* recvBuffer;
 	string  _buffer, command, cmd_buffer,
 		help_all_cmd, help_cmds[22];
@@ -96,8 +93,8 @@ private:
 
 
 	//===================================команды поддерживаемые сервером для клиента===================================
-	int authorize(SOCKET currentSocket);
-	int reg(SOCKET& currentSocket, int initiator);
+	int authorize(SOCKET currentSocket, int th_id);
+	int reg(SOCKET& currentSocket, int initiator, int th_id);
 	int chmod(SOCKET& currentSocket);
 	int help(SOCKET& currentSocket);
 	int rr(SOCKET& currentSocket);
@@ -113,7 +110,7 @@ private:
 	int read(SOCKET& currentSocket);
 	int ls(SOCKET& currentSocket);
 	int logout(SOCKET& currentSocket, int th_id);
-	int createUser(SOCKET& currentSocket);
+	int createUser(SOCKET& currentSocket, int th_id);
 	int deleteUser(SOCKET& currentSocket, int th_id);
 	int changePUser(SOCKET& currentSocket);
 	int changeLUser(SOCKET& currentSocket);
@@ -132,7 +129,7 @@ private:
 
 	//функции работы с матрицей прав
 	void saveMatrixLaw();
-	int addUserInMatrixLaw(string login, string group);
+	//int addUserInMatrixLaw(string login, string group);
 	int loadMatrixLaw();
 
 	string get_level_access(int ind, string path, bool INFO_FL);
@@ -158,8 +155,6 @@ private:
 	//функции работы с полем пользователя
 	int find_user(string& login);
 	int find_user(int curSock);
-	int set_user();
-	int get_user();
 
 public:
 	//функция запуска сервера

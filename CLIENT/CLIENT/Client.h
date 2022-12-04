@@ -15,8 +15,9 @@
 
 #define RECV_FL 0
 #define SEND_FL 1
-#define AUTH 0
-#define REG 1
+#define OK_FL 2
+#define AUTH false
+#define REG true
 
 using namespace std;
 
@@ -47,7 +48,7 @@ public:
 	int header();
 	void start();
 
-	void close_connection(bool FL);
+	void close_connection(int FL);
 };
 
 void Client::start()
@@ -179,7 +180,7 @@ int Client::header()
 		if (it == -1)
 			it = answer.size();
 		answer.erase(it);
-		if (answer == "auth")
+		/*if (answer == "auth")
 		{
 			auth(AUTH);
 			continue;
@@ -188,7 +189,7 @@ int Client::header()
 		{
 			auth(REG);
 			continue;
-		}
+		}*/
 
 		// -> отправляем размер буфера
 		// -> отправляем сам буфер
@@ -205,13 +206,17 @@ int Client::header()
 		answer = recvBuffer;
 
 		cout << recvBuffer << " ";
-		if (answer == "disconnected")
+		if (answer == "#1")
 		{
-			shutdown(ConnectSocket, 2);
-			closesocket(ConnectSocket);
+			cout << endl << "You were disabled by the administrator's command!" << endl;
 			delete[] recvBuffer;
-			cout << endl;
-			return 0;
+			close_connection(OK_FL);
+		}
+		if (answer == "#0")
+		{
+			cout << endl << "Shutdown is successful." << endl;
+			delete[] recvBuffer;
+			close_connection(OK_FL);
 		}
 		delete[] recvBuffer;
 	} while (true);
@@ -281,7 +286,7 @@ void Client::init_client()
 	}
 }
 
-void Client::close_connection(bool FL)
+void Client::close_connection(int FL)
 {
 	if (FL == SEND_FL)
 		cout << "Send failed!" << endl;

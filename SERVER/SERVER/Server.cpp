@@ -1,11 +1,20 @@
 #include "Server.h"
 
 //Reallocates memory for the user class
-Server::USERS* Server::reallocated(size_t size)
+Server::USERS* Server::reallocated(int value)
 {
+	int it = 0;
+	int size = users_count + value;
 	USERS* new_user = new USERS[size];
+	if (value > 0)
+	{
+		it = 1;
+		users_count += 1;
+	}
+	else
+		users_count -= 1;
 
-	for (int i = 0; i < size - 1; i++)
+	for (int i = 0; i < size - it; i++)
 	{
 		new_user[i].login = user[i].login;
 		new_user[i].password = user[i].password;
@@ -13,6 +22,7 @@ Server::USERS* Server::reallocated(size_t size)
 		new_user[i].home_path = user[i].home_path;
 		new_user[i].auth_token = user[i].auth_token;
 		new_user[i].status = user[i].status;
+		new_user[i].del_tocken = user[i].del_tocken;
 		if (new_user[i].auth_token)
 			new_user[i].cur_sock = user[i].cur_sock;
 		for (int j = 0; j < user[i].group.size(); j++)
@@ -51,7 +61,7 @@ int Server::load_users_data()
 		if (i > users_count)
 		{
 			users_count++;
-			user = reallocated(users_count);
+			user = reallocated(1);
 		}
 		user[i].auth_token = false;
 		file >> user[i].current_path;
@@ -66,6 +76,7 @@ int Server::load_users_data()
 		
 		file >> user[i].password;
 		file >> user[i].status;
+		user[i].del_tocken = false;
 
 		i++;
 	}
@@ -76,15 +87,17 @@ int Server::load_users_data()
 
 int Server::save_users_data()
 {
-	fstream file;
+	ofstream file;
 
 	file.open(USERS_DATA_PATH);
-	if (file.bad())
+
+	if (file.bad() || !file.is_open())
 	{
 		cout << "\n\t\t\tUnable to open the file::usersData.txt  A new file will be created!\n";
 		file.close();
 
-		file.open(USERS_DATA_PATH);
+		string name = "usersData_BAD.txt";
+		file.open(name);
 	}
 	file << users_count << endl;
 	for (int i = 1; i < users_count; i++)
@@ -135,14 +148,14 @@ Server::Server()
 
 	//инициализируем СУПЕРпользователя
 	user[0].login = "god";
-	user[0].password = "just_god";
-	user[0].home_path = "/god/home";
-	user[0].current_path = "/god/home";
+	user[0].password = "581282523510841531571641049818249153022108171301450109431851121472104614982011196952499919422817921216021314202181233516115106211711510464183113204226709711231178";
+	user[0].home_path = "\\god\\home";
+	user[0].current_path = "\\god\\home";
 	user[0].group.push_back("god");
 	user[0].group.push_back(PRIORITY);
 	user[0].auth_token = false;
 	user[0].status = GOD;
-
+	user[0].del_tocken = false;
 
 	//заполняем структуру информации о пользователях
 	load_users_data();
@@ -306,11 +319,14 @@ void Server::header()
 		if (ClientSocket[counter] == INVALID_SOCKET)
 		{
 			cout << "Accepted error!" << endl;
+			shutdown(ClientSocket[counter], 2);
+			closesocket(ClientSocket[counter]);
 			int er = WSAGetLastError();
-			cout << endl << "WSA ERROR :: " << er << endl;
+			cout << endl << "WSA ERROR :: " << er << " SOCKET:: " << ClientSocket[counter] << " THREAD:: " << counter << endl;
 			WSACleanup();
 			er = WSAGetLastError();
-			cout << endl << "WSA ERROR :: " << er << endl;
+			cout << "WSA ERROR :: " << er << endl;
+			freeaddrinfo(addrResult);
 			system("pause");
 			exit(1);
 		}
@@ -325,12 +341,12 @@ void Server::header()
 
 void Server::thread_starter(LPVOID that, SOCKET sock, int counter)
 {
-	return ((Server*)that)->Client_header(sock, counter);
+	((Server*)that)->Client_header(sock, counter);
 }
 
 int Server::find_user(string& login)
 {
-	for (int i = 0; i < MAX_LOAD; i++)
+	for (int i = 0; i < users_count; i++)
 	{
 		if (login == user[i].login)
 			return i;
@@ -340,7 +356,7 @@ int Server::find_user(string& login)
 
 int Server::find_user(int curSock)
 {
-	for (int i = 0; i < MAX_LOAD; i++)
+	for (int i = 0; i < users_count; i++)
 	{
 		if (user[i].cur_sock == curSock)
 			return i;
@@ -348,7 +364,7 @@ int Server::find_user(int curSock)
 	return -1;
 }
 
-inline int Server::authorize(SOCKET currentSocket)
+inline int Server::authorize(SOCKET currentSocket, int th_id)
 {
 	string login, pass;
 	int ind;
@@ -371,17 +387,40 @@ inline int Server::authorize(SOCKET currentSocket)
 		send_data(currentSocket, "PASS->");
 		get_command(currentSocket);
 		pass = cmd_buffer;
+		int size = pass.size();
+		unsigned char* _pass;
+		unsigned char hash[64];
+		_pass = new unsigned char[size + 1];
+		for (int i = 0; i < pass.size(); i++)
+			_pass[i] = pass[i];
+		pass.clear();
+		pass.reserve(64);
+		SHA512(_pass, size, hash);
+		char* buffer;
+		int temp;
+		for (int i = 0; i < 64; i++)
+		{
+			temp = hash[i];
+			if (temp > 0 && temp < 10)
+				buffer = new char[1];
+			else if (temp > 10 && temp < 100)
+				buffer = new char[2];
+			else
+				buffer = new char[3];
+			itoa(temp, buffer, 10);
+			pass += buffer;
+		}
 	}
 
 	ind = find_user(login);
-	if (user[ind].auth_token == true)
-	{
-		send_data(currentSocket, "ERROR! This user is already logged in to another thread!\n");
-		return -1;
-	}
 	if (ind == -1)
 	{
 		send_data(currentSocket, "ERROR! Invalid login!\n");
+		return -1;
+	}
+	if (user[ind].auth_token == true)
+	{
+		send_data(currentSocket, "ERROR! This user is already logged in to another thread!\n");
 		return -1;
 	}
 	else {
@@ -391,6 +430,7 @@ inline int Server::authorize(SOCKET currentSocket)
 			user[ind].current_path = user[ind].home_path;
 			user[ind].auth_token = true;
 			user[ind].cur_sock = currentSocket;
+			user[ind].th_id = th_id;
 			send_data(currentSocket, user[ind].home_path);
 			return 0;
 		}
@@ -442,14 +482,14 @@ inline int Server::pars_command(SOCKET& currentSocket, int th_id)
 		{
 			command.clear();
 			cmd_buffer.clear();
-			return -10;
+			return INV_CMD;
 		}
 	}
 
 	switch (switch_on)
 	{
 	case 2:
-		ret = authorize(currentSocket);
+		ret = authorize(currentSocket, th_id);
 		return ret;
 	case 3:
 		ret = rr(currentSocket);
@@ -458,7 +498,7 @@ inline int Server::pars_command(SOCKET& currentSocket, int th_id)
 		if (logged_in(currentSocket))
 			ret = chmod(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 0:
 		ret = help(currentSocket);
@@ -473,128 +513,133 @@ inline int Server::pars_command(SOCKET& currentSocket, int th_id)
 		if (logged_in(currentSocket))
 			ret = createFile(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 11:
 		if (logged_in(currentSocket))
 			ret = deleteFD(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 10:
 		if (logged_in(currentSocket))
 			ret = createDirectory(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 12:
 		if (logged_in(currentSocket))
 			ret = cd(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 13:
 		if (logged_in(currentSocket))
 			ret = createGroup(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 14:
 		if (logged_in(currentSocket))
 			ret = deleteGroup(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 15:
 		if (logged_in(currentSocket))
 			ret = addUserInGroup(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 16:
 		if (logged_in(currentSocket))
 			ret = deleteUserInGroup(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 4:
 		if (logged_in(currentSocket))
 			ret = write(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 5:
 		if (logged_in(currentSocket))
 			ret = read(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 6:
 		if (logged_in(currentSocket))
 			ret = ls(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 7:
 		if (logged_in(currentSocket))
 			ret = logout(currentSocket, th_id);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 17:
 		if (logged_in(currentSocket))
-			ret = createUser(currentSocket);
+			ret = createUser(currentSocket, th_id);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 18:
 		if (logged_in(currentSocket))
 			ret = deleteUser(currentSocket, th_id);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 20:
 		if (logged_in(currentSocket))
 			ret = changePUser(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 19:
 		if (logged_in(currentSocket))
 			ret = changeLUser(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 21:
 		if (logged_in(currentSocket))
 			ret = listUser(currentSocket);
 		else
-			send_data(currentSocket, "To execute this command, you need to log in!");
+			send_data(currentSocket, "To execute this command, you need to log in!\n");
 		return ret;
 	case 1:
-		ret = reg(currentSocket, USER);
+		ret = reg(currentSocket, USER, th_id);
 		return ret;
 	default:
-		return -10;
+		return INV_CMD;
 	}
 }
 
 int Server::get_command(SOCKET currentSocket)
 {
-	recv(currentSocket, (char*)&recvBuf_size, sizeof(int), NULL);
+	int ind = find_user(currentSocket);
+
+	err_val1 = recv(currentSocket, (char*)&recvBuf_size, sizeof(int), NULL);
 	recvBuffer = new char[recvBuf_size];
-	result = recv(currentSocket, recvBuffer, recvBuf_size, NULL);
-	if (result == SOCKET_ERROR)
+	err_val2 = recv(currentSocket, recvBuffer, recvBuf_size, NULL);
+	if ( ind != -1 && user[ind].del_tocken)
 	{
-		cout << "getting failed!\n" << endl;
+		delete[] recvBuffer;
+		return EXIT;
+	}
+	if (err_val1 == SOCKET_ERROR || err_val2 == SOCKET_ERROR)
+	{
+		cout << "Getting failed! :: " << currentSocket << endl;
 		shutdown(currentSocket, 2);
 		closesocket(currentSocket);
-		//freeaddrinfo(addrResult);
-		WSACleanup();
-		system("pause");
-		std::exit(1);
+		err_val1 = WSAGetLastError();
+		cout << "WSA ERROR IN 'get_comand' FUNC --> " << err_val1 << endl;
 	}
-	else if (result < recvBuf_size)
+	else if (err_val2 < recvBuf_size)
 	{
 		cout << "\n\t\tWAITING ALL DATA\n\n";
 		system("pause");
@@ -604,22 +649,25 @@ int Server::get_command(SOCKET currentSocket)
 	cmd_buffer = recvBuffer;
 	delete[] recvBuffer;
 	//============================================================================
-
+	return 0;
 }
 
 void Server::Client_header(SOCKET& currentSocket, int ind)
 {
-	int ex_flag = 0;
+	int flag = 0;
 	do {
-		get_command(currentSocket);
-		ex_flag = pars_command(currentSocket, ind);
-		if (ex_flag == -10)
+		flag = get_command(currentSocket);
+		if (flag == EXIT)
+			break;
+		flag = pars_command(currentSocket, ind);
+		if (flag == INV_CMD)
 		{
 			int _ind = find_user(currentSocket);
 			send_data(currentSocket, "Invalid command!\n" + user[_ind].current_path);
 		}
-		else if (ex_flag == 1234)
+		else if (flag == EXIT)
 			break;
+
 	} while (true);
 }
 
@@ -697,6 +745,8 @@ inline string Server::get_level_access(int ind, string path, bool INFO_FL)
 		{
 			groups.push_back(_gr);
 			_gr.clear();
+			it++;
+			continue;
 		}
 		_gr += access[it];
 		it++;
@@ -754,6 +804,16 @@ inline void Server::set_level_access(int ind, string path, string& access)
 	//если в пути не существует какой-либо директории, то добавляем ее в матрицу прав с теми же значениями доступа, что и для конечной директории
 	while (LMatrix.find(make_pair<string, string>(user[ind].login.c_str(), path.c_str())) == LMatrix.end() && path != SERVER_ROOT_PATH)
 	{
+		//DELETE THIS CODE AFTER DEBUGGING!
+		for (int i = 0; i < user[ind].group.size(); i++)
+		{
+			if (user[ind].group[i] == "ty")
+			{
+				cout << "\n\a\tFIND INCORRECT GROUP! 'ty'" << endl;
+				system("pause");
+			}
+		}
+		//
 
 		//pair<string, string> key = make_pair<string, string>(user[ind].login.c_str(), path.c_str());
 		LMatrix.insert(make_pair<pair<string, string>, string>(make_pair<string, string>(user[ind].login.c_str(), path.c_str()), access.c_str()));
@@ -871,7 +931,7 @@ void Server::delete_level_access(int ind, string path)
 	}
 
 	//сохраняем измененную матрицу в файл
-	fstream out_file(MATRIX_LAW_PATH);
+	fstream out_file(MATRIX_LAW_PATH, ios::trunc);
 	if (!out_file.is_open())
 		out_file.open(MATRIX_LAW_PATH);
 
@@ -879,17 +939,6 @@ void Server::delete_level_access(int ind, string path)
 		out_file << it->first.first << " " << it->first.second << " " << it->second << endl;
 
 	out_file.close();
-}
-
-inline int Server::set_user()
-{
-
-	return 0;
-}
-
-inline int Server::get_user()
-{
-	return 0;
 }
 
 inline int Server::send_data(SOCKET& currentSocket, string cmd)
@@ -901,20 +950,21 @@ inline int Server::send_data(SOCKET& currentSocket, string cmd)
 	buf_size = cmd.size();
 	cmd[buf_size] = '\0';
 	buf_size++;
-	send(currentSocket, (char*)&buf_size, sizeof(int), NULL);
-	result = send(currentSocket, cmd.c_str(), buf_size, NULL);
-	if (result == SOCKET_ERROR)
+
+	err_val1 = send(currentSocket, (char*)&buf_size, sizeof(int), NULL);
+	err_val2 = send(currentSocket, cmd.c_str(), buf_size, NULL);
+
+	if (err_val1 == SOCKET_ERROR || err_val2 == SOCKET_ERROR)
 	{
 		cout << "Send failed!" << endl;
-		closesocket(ClientSocket[0]);
-		freeaddrinfo(addrResult);
-		WSACleanup();
-		system("pause");
-		exit(1);
+		shutdown(currentSocket, 2);
+		closesocket(currentSocket);
+		return 0;
 	}
-	else {
-		cout << "successfully" << endl;
-	}
+	else 
+		cout << cmd << " :: " << currentSocket << endl;
+
+	return 0;
 }
 
 inline int Server::send_data(SOCKET& currentSocket)
@@ -942,14 +992,13 @@ inline int Server::send_data(SOCKET& currentSocket)
 	}
 }
 
-int Server::reg(SOCKET& currentSocket, int initiator)
+int Server::reg(SOCKET& currentSocket, int initiator, int th_id)
 {
 	string log, pass;
 	log.reserve(10);
 	pass.reserve(20);
 
 	//получаем из буффера команды логин и пароль
-
 	if (cmd_buffer.size() != 0)
 	{
 		vector<string> box_opt = get_opt(true);
@@ -968,19 +1017,33 @@ int Server::reg(SOCKET& currentSocket, int initiator)
 		send_data(currentSocket, "PASS->");
 		get_command(currentSocket);
 		pass = cmd_buffer;
+
+		int size = pass.size();
+		unsigned char* _pass;
+		unsigned char hash[64];
+		_pass = new unsigned char[size + 1];
+		for (int i = 0; i < pass.size(); i++)
+			_pass[i] = pass[i];
+		pass.clear();
+		pass.reserve(64);
+		SHA512(_pass, size, hash);
+		char* buffer;
+		int temp;
+		for (int i = 0; i < 64; i++)
+		{
+			temp = hash[i];
+			if (temp > 0 && temp < 10)
+				buffer = new char[1];
+			else if (temp > 10 && temp < 100)
+				buffer = new char[2];
+			else
+				buffer = new char[3];
+			itoa(temp, buffer, 10);
+			pass += buffer;
+		}
 	}
 
-	vector<string> box_opt = get_opt(true);
-	if (box_opt.size() != 2)
-	{
-		send_data(currentSocket, "ERROR! Invalid command options!\n");
-		return -1;
-	}
-	log = box_opt[0];
-	pass = box_opt[1];
-	//если опций не две, вернем юзеру ошибку
 
-	//?????????????????????????????????????????????????????
 	//проверяем логин и пароль на пустоту
 	if (log.size() < 2)
 	{
@@ -1021,8 +1084,7 @@ int Server::reg(SOCKET& currentSocket, int initiator)
 
 	//выделяем память под нового юзера, 
 	// заполняем структуру и добавляем юзера в матрицу прав
-	users_count++;
-	user = reallocated(users_count);
+	user = reallocated(1);
 
 	if (initiator > USER)
 	{
@@ -1033,16 +1095,20 @@ int Server::reg(SOCKET& currentSocket, int initiator)
 		user[users_count - 1].login = log;
 		user[users_count - 1].password = pass;
 		user[users_count - 1].status = USER;
-		user[users_count - 1].group.push_back(user[users_count - 1].login);
+		user[users_count - 1].th_id = -1;
+		user[users_count - 1].del_tocken = false;
+ 		user[users_count - 1].group.push_back(user[users_count - 1].login);
 	}
 	else {
 		user[users_count - 1].auth_token = true;
 		user[users_count - 1].current_path = '\\' + log + "\\home";
 		user[users_count - 1].cur_sock = currentSocket;
+		user[users_count - 1].th_id = th_id;
 		user[users_count - 1].home_path = '\\' + log + "\\home";
 		user[users_count - 1].login = log;
 		user[users_count - 1].password = pass;
 		user[users_count - 1].status = USER;
+		user[users_count - 1].del_tocken = false;
 		user[users_count - 1].group.push_back(user[users_count - 1].login);
 	}
 
@@ -1051,7 +1117,13 @@ int Server::reg(SOCKET& currentSocket, int initiator)
 		path = SERVER_ROOT_PATH;
 	path += user[users_count - 1].current_path;
 	set_level_access(users_count - 1, path, access);
-	send_data(currentSocket, user[users_count - 1].current_path);
+	if (initiator > USER)
+	{
+		int ind = find_user(currentSocket);
+		send_data(currentSocket, "Successfull!\n#" + user[ind].current_path);
+	}
+	else
+		send_data(currentSocket, user[users_count - 1].current_path);
 
 	save_users_data();
 	return 0;
@@ -1091,7 +1163,6 @@ int Server::chmod(SOCKET& currentSocket)
 	{
 		int ind_owner = find_user(login_owner);
 		//дописываем в значение доступа логин создателя и его группы через слеш
-		opt[1] += user[ind_owner].login;
 		for (int i = 0; i < user[ind_owner].group.size(); i++)
 			opt[1] += "/" + user[ind_owner].group[i];
 
@@ -1185,11 +1256,6 @@ int Server::createFile(SOCKET& currentSocket)
 	else
 		path += user[ind].current_path + '\\' + file_name;
 
-	if (file_name == ERROR_STR || _access == ERROR_STR)
-	{
-		send_data(currentSocket, "ERROR! Incorrect command options!\n" + user[ind].current_path);
-		return 0;
-	}
 	if (check_path(file_name, FILE_FL) == INV_SYMBOL_IN_PATH)
 	{
 		send_data(currentSocket, "ERROR! Invalid symbol in the directory name!\n" + user[ind].current_path);
@@ -1241,8 +1307,8 @@ int Server::createFile(SOCKET& currentSocket)
 
 	//дописываем в значение доступа логин создателя и его группы через слеш
 	_access += user[ind].login;
-	for (int i = 0; i < user[ind].group.size(); i++)
-		_access += "/" + user[ind].group[i];
+	for (int i = 1; i < user[ind].group.size(); i++)
+		_access +=  '\\' + user[ind].group[i];
 
 	set_level_access(ind, path, _access);
 	send_data(currentSocket, "Successfull!\n" + user[ind].current_path);
@@ -1362,10 +1428,10 @@ int Server::createDirectory(SOCKET& currentSocket)
 		switch (static_cast<char>(access[0]))
 		{
 		case '7': //полный доступ
-			user[ind].current_path = user[ind].home_path + "\\" + dir_name;
+			user[ind].current_path += "\\" + dir_name;
 			break;
 		case '6': //не разрешено просматривать
-			user[ind].current_path = user[ind].home_path + "\\" + dir_name;
+			user[ind].current_path += "\\" + dir_name;
 			break;
 		case '3': //нет дотупа на переход в директорию
 			break;
@@ -1491,7 +1557,7 @@ int Server::deleteUserInGroup(SOCKET& currentSocket)
 	return 0;
 }
 
-int Server::write(SOCKET& currentSocket)
+int Server::write(SOCKET& currentSocket) //write ___.txt 1010101010101010 --> класс строки кинул исключение !!!
 {
 	string data, file_name;
 	int ind = find_user(currentSocket);
@@ -1527,7 +1593,7 @@ int Server::write(SOCKET& currentSocket)
 	if (access == "2" || access == "3" || access == "6" || access == "7")
 	{
 		fstream file;
-		file.open(file_name, ios::app);
+		file.open(path, ios::trunc);
 		if (!file.is_open())
 		{
 			send_data(currentSocket, "Internal server error! Couldn't open the file " + file_name + "\n#" + user[ind].current_path);
@@ -1578,10 +1644,10 @@ int Server::read(SOCKET& currentSocket)
 
 	//проверить доступ к файлу в матрице прав
 	string access = get_level_access(ind, path, false);
-	if (access == "2" || access == "3" || access == "6" || access == "7")
+	if (access == "1" || access == "3" || access == "5" || access == "7")
 	{
 		fstream file;
-		file.open(file_name, ios::in);
+		file.open(path, ios::in);
 		if (!file.is_open())
 		{
 			send_data(currentSocket, "Internal server error! Couldn't open the file " + file_name + "\n#" + user[ind].current_path);
@@ -1669,7 +1735,7 @@ int Server::ls(SOCKET& currentSocket)
 int Server::logout(SOCKET& currentSocket, int th_id)
 {
 	int cl_id = find_user(currentSocket);
-	send_data(currentSocket, "disconnected");
+	send_data(currentSocket, "#0");
 	user[cl_id].auth_token = false;
 
 	//закрываем клиентский сокет
@@ -1678,12 +1744,14 @@ int Server::logout(SOCKET& currentSocket, int th_id)
 	//сохраняем данные юзеров
 	save_users_data();
 
+	user[cl_id].cur_sock = 0;
+
 	//добавляем освободившийся индекс в стек
 	free_index.push(th_id);
-	return 1234;
+	return EXIT;
 }
 
-int Server::createUser(SOCKET& currentSocket)
+int Server::createUser(SOCKET& currentSocket, int th_id)
 {
 	int ind = find_user(currentSocket);
 	if (user[ind].status < ADMIN)
@@ -1691,7 +1759,7 @@ int Server::createUser(SOCKET& currentSocket)
 		send_data(currentSocket, "ERROR! To execute this command, you must have an ADMIN access level and higher.\n#" + user[ind].current_path);
 		return 0;
 	}
-	reg(currentSocket, user[ind].status);
+	reg(currentSocket, user[ind].status, th_id);
 
 	return 0;
 }
@@ -1721,22 +1789,35 @@ int Server::deleteUser(SOCKET& currentSocket, int th_id)
 		return 0;
 	}
 
-	string del_path = SERVER_ROOT_PATH + '\\' + user[del_ind].login;
+	string del_path = SERVER_ROOT_PATH;
+	del_path += '\\' + user[del_ind].login;
+	if (!fs::exists(del_path))
+	{
+		send_data(currentSocket, "Internal server error! \nThe root directory of the user being deleted was not found!\n#" + user[ind].current_path);
+		return 0;
+	}
 	//удаляем все права для данного юзера (права по ключу юзера)
 	delete_level_access(del_ind, del_path);
-	//удаляем все права для данного юзера (права по ключу another group)
-	//delete_level_access(ind, del_path);
 
 	fs::remove_all(del_path);
-	if (!user[ind].auth_token) {
-		send_data(currentSocket, "Successfull!\n" + user[ind].current_path);
+	if (!user[ind].auth_token) 
 		cout << "\a\tWARNING!!! The connection with the user who requested the execution of the command 'delete user' is lost!" << endl;
-	}
+	int ret_value = 0;
 	if (user[del_ind].auth_token == true)
 	{
 		SOCKET temp = user[del_ind].cur_sock;
-		logout(temp, th_id);
+		user[del_ind].del_tocken = true;
+		send_data(temp, "#1");
+		user[del_ind].auth_token = false;
+		shutdown(temp, 2);
+		closesocket(temp);
+		user[del_ind].cur_sock = 0;
+		free_index.push(user[del_ind].th_id);
 	}
+	user = reallocated(-1);
+	save_users_data();
+	send_data(currentSocket, "Successfull!\n" + user[ind].current_path);
+
 	return 0;
 }
 
@@ -1776,6 +1857,8 @@ int Server::changePUser(SOCKET& currentSocket)
 		_pass = new unsigned char[size + 1];
 		for (int i = 0; i < pass.size(); i++)
 			_pass[i] = pass[i];
+		pass.clear();
+		pass.reserve(64);
 		SHA512(_pass, size, hash);
 		char* buffer;
 		int temp;
@@ -1876,7 +1959,7 @@ int Server::listUser(SOCKET& currentSocket)
 		result += "\nUSERS GROUPS : ";
 		for (int j = 0; j < user[i].group.size(); j++)
 		{
-			result += user[ind].group[j] + " ";
+			result += user[i].group[j] + " ";
 		}
 		result += "\n-------------------\n";
 	}
