@@ -32,7 +32,7 @@ class Client {
 	int buf_size, recvBuf_size,
 		val1, val2;
 
-	string buffer, login, pass;
+	string buffer, login, pass, mark;
 	char* recvBuffer;
 
 	unsigned char hash[32];
@@ -77,6 +77,9 @@ int Client::auth(bool FL)
 	cout << "Pass: ";
 	cin >> pass;
 
+	cout << "Mark: ";
+	cin >> mark;
+
 	unsigned char* _pass;
 	unsigned char hash[64];
 	int temp;
@@ -113,6 +116,7 @@ int Client::auth(bool FL)
 		itoa(temp, buffer, 10);
 		pass += buffer;
 	}
+	pass += " " + mark;
 	pass += '\0';
 	size = pass.size();
 	val1 = send(ConnectSocket, (char*)&size, sizeof(int), NULL);
@@ -205,7 +209,6 @@ int Client::header()
 			close_connection(RECV_FL);
 		answer = recvBuffer;
 
-		cout << recvBuffer << " ";
 		if (answer == "#1")
 		{
 			cout << endl << "You were disabled by the administrator's command!" << endl;
@@ -218,6 +221,8 @@ int Client::header()
 			delete[] recvBuffer;
 			close_connection(OK_FL);
 		}
+
+		cout << recvBuffer << " ";
 		delete[] recvBuffer;
 	} while (true);
 }

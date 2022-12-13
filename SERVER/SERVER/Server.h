@@ -1,5 +1,6 @@
 #pragma once
 
+
 #define WIN32_LEAN_AND_MEAN
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib,"Crypt32.lib")
@@ -16,6 +17,8 @@
 #include <fstream>
 #include <filesystem>
 #include <map>
+#include <set>
+#include <algorithm>
 
 #include <openssl/sha.h>
 
@@ -30,6 +33,7 @@
 #define MATRIX_LAW_PATH "LawMatrix.txt"
 #define USERS_DATA_PATH "usersData.txt"
 #define SERVER_ROOT_PATH "C:\\Users\\gutro\\Desktop\\server_root"
+#define MAND_SYS_PATH "mandSys.txt"
 
 #define DIR_FL 1
 #define FILE_FL 2
@@ -54,10 +58,26 @@ private:
 	thread th[MAX_LOAD];
 
 
-	//матрица прав пользователей / (login + path) -> access
+	//матрица прав пользователей / (login/group + path) -> access
 	map<pair<string, string>, string> LMatrix;
 
 	enum { USER, ADMIN, GOD };
+	enum {USER_1, USER_2, USER_3, ADMIN_1, ADMIN_2, ADMIN_3, _GOD};
+
+	//структура мандатной системы доступа
+	class MANDSYS {
+	public:
+		//object / mark
+		map<string, int> marks;
+		int load_marks();
+		int save_marks();
+		int get_mark(string key);
+		int set_mark(string key, int value);
+		int change_mark(string key, int value);
+		int delete_marks(string key);
+	};
+
+	MANDSYS ms;
 
 	//структура описания пользователя
 	class USERS {
@@ -69,6 +89,7 @@ private:
 		vector<string> group;
 		bool auth_token, del_tocken;
 		int cur_sock, status, th_id;
+		int current_mark, def_mark;
 	};
 
 
@@ -85,11 +106,11 @@ private:
 		err_val1, err_val2;
 	char* recvBuffer;
 	string  _buffer, command, cmd_buffer,
-		help_all_cmd, help_cmds[22];
+		help_all_cmd, help_cmds[25];
 
-	string supported_commands[22] = { "help", "reg", "auth", "rr", "write", "read",
+	string supported_commands[25] = { "help", "reg", "auth", "rr", "write", "read",
 		"ls", "logout", "chmod", "crF", "crD", "del", "cd", "crGr", "delGr", "addUnG",
-	"delUnG", "crUser", "delUser", "chLUser", "chPUser", "listUser" };
+	"delUnG", "crUser", "delUser", "chLUser", "chPUser", "listUser", "cm", "chM", "append"};
 
 
 	//===================================команды поддерживаемые сервером для клиента===================================
@@ -106,7 +127,7 @@ private:
 	int deleteGroup(SOCKET& currentSocket);
 	int addUserInGroup(SOCKET& currentSocket);
 	int deleteUserInGroup(SOCKET& currentSocket);
-	int write(SOCKET& currentSocket);
+	int write(SOCKET& currentSocket, bool APP_FL);
 	int read(SOCKET& currentSocket);
 	int ls(SOCKET& currentSocket);
 	int logout(SOCKET& currentSocket, int th_id);
@@ -115,6 +136,8 @@ private:
 	int changePUser(SOCKET& currentSocket);
 	int changeLUser(SOCKET& currentSocket);
 	int listUser(SOCKET& currentSocket);
+	int cm(SOCKET& currentSocket);
+	int chM(SOCKET& currentSocket);
 
 	//===================================служебные функции сервера================================
 	//получение и парсинг команд и опций 
@@ -128,14 +151,16 @@ private:
 	string get_owner(string path);
 
 	//функции работы с матрицей прав
-	void saveMatrixLaw();
+	void save_Matrix_Law();
 	//int addUserInMatrixLaw(string login, string group);
 	int loadMatrixLaw();
 
 	string get_level_access(int ind, string path, bool INFO_FL);
-	void set_level_access(int ind, string path, string& access);
+	void add_level_access(int ind, string group);
+	void set_level_access(int ind, string path, string& access, int mark);
 	void change_level_access(int ind, string path, string& access);
-	void delete_level_access(int ind, string path);
+	void delete_level_access(int ind, string path, int FL);
+	void update_level_access(int ind);
 
 	//сохранение и загрузка структуры данных пользователей
 	int load_users_data();
