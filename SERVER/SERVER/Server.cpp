@@ -41,8 +41,44 @@ Server::Server()
 	user[0].current_mark = _GOD;
 	user[0].def_mark = _GOD;
 
+	//инициализируем логгирующего пользователя
+	logger.log_user.login = "logger";
+	logger.log_user.password = "1";
+	logger.log_user.auth_token = false;
+	logger.log_user.current_mark = 0;
+	logger.log_user.current_path = nullptr;
+	logger.log_user.cur_sock = 0;
+	logger.log_user.def_mark = 0;
+	logger.log_user.del_tocken = false;
+	logger.log_user.home_path = nullptr;
+	logger.log_user.status = USER;
+	logger.log_user.th_id = -1;
+
+	//загружаем последний журнал логов, если он есть
+	fstream in;
+	if(fs::exists(LOG_JOURNAL_PATH))
+	{
+		in.open(LOG_JOURNAL_PATH, ios::in);
+		in >> logger.journal_size;
+		string tmp;
+		for(int i=0; i<logger.journal_size; i++)
+		{
+			in >> tmp;
+			logger.journal.push_back(tmp);
+			tmp.clear();
+		}
+	}
+
 	//заполняем структуру информации о пользователях
 	load_users_data();
+
+	//инициализируем контейнер отлеживаемых субъектов
+	for (int i = 0; i < users_count; i++)
+	{
+		logger.tracked_subj.push_back(pair<string, string>(user[i].login, "00000"));
+		for (int j = 1; j < user[i].group.size(); j++)
+			logger.tracked_subj.push_back(pair<string, string>(user[i].group[j], "00000"));
+	}
 
 	//определяем матрицу прав из файла (заполнение ассоциативного массима map)
 	if (!loadMatrixLaw())
@@ -224,6 +260,7 @@ void Server::thread_starter(LPVOID that, SOCKET sock, int counter)
 
 void Server::Client_header(SOCKET& currentSocket, int ind)
 {
+	ptrS = this;
 	int flag = 0;
 	do {
 		flag = get_command(currentSocket);
@@ -254,6 +291,14 @@ int Server::close_client(SOCKET& currentSocket, int thread_ind, int client_ind)
 //----------------------------------------
 int Server::authorize(SOCKET currentSocket, int th_id)
 {
+	struct auth_counter {
+		int counter;
+		SOCKET sock;
+	};
+	static vector<pair<int, SOCKET>> count = { {0, currentSocket} };
+	vector<pair<int, SOCKET>>::iterator it;
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+
 	string login, pass;
 	int ind, mark;
 	
@@ -311,17 +356,47 @@ int Server::authorize(SOCKET currentSocket, int th_id)
 	if (ind == -1)
 	{
 		send_data(currentSocket, "ERROR! Invalid login!\n");
+
+		it = ranges::find(count, currentSocket, &pair<int, SOCKET>::second);
+		if (it != count.end())
+			it->first++;
+		else
+		{
+			pair<int, SOCKET> c = { 1, currentSocket };
+			count.push_back(c);
+		}
+
+		logger.log(LOGGER::AUTH_m, currentSocket, "Invalid login", it != count.end() ? it->first : 1);
 		return -1;
 	}
 	if (user[ind].auth_token == true)
 	{
 		send_data(currentSocket, "ERROR! This user is already logged in to another thread!\n");
+
+		s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+		for (int i = 0; i < user[ind].group.size(); i++)
+		{
+			s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+			if (s_it_g != logger.tracked_subj.end())
+				break;
+		}
+		if (s_it->second[3] == '1' || s_it_g->second[3] == '1')
+			logger.log(LOGGER::AUTH_m, currentSocket, "Reauthorization attempt", 0);
 		return -1;
 	}
 	else {
 		if (mark > user[ind].def_mark || mark < 0)
 		{
 			send_data(currentSocket, "ERROR! Invalid mark!\n");
+			s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+			for (int i = 0; i < user[ind].group.size(); i++)
+			{
+				s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+				if (s_it_g != logger.tracked_subj.end())
+					break;
+			}
+			if (s_it->second[3] == '1' || s_it_g->second[3] == '1')
+				logger.log(LOGGER::AUTH_m, currentSocket, "Incorrect label of the mandatory system was passed", 0);
 			return -1;
 		}
 		//int pos = user[ind].password.compare(pass);
@@ -333,6 +408,17 @@ int Server::authorize(SOCKET currentSocket, int th_id)
 			user[ind].cur_sock = currentSocket;
 			user[ind].th_id = th_id;
 			send_data(currentSocket, user[ind].home_path);
+			
+			it = ranges::find(count, currentSocket, &pair<int, SOCKET>::second);
+			s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+			for (int i = 0; i < user[ind].group.size(); i++)
+			{
+				s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+				if (s_it_g != logger.tracked_subj.end())
+					break;
+			}
+			if (s_it->second[3] == '1' || s_it_g->second[3] == '1')
+				logger.log(LOGGER::AUTH_m, currentSocket, "Successful authorization", it != count.end() ? it->first : 0);
 			return 0;
 		}
 		else {
@@ -344,6 +430,7 @@ int Server::authorize(SOCKET currentSocket, int th_id)
 
 int Server::reg(SOCKET& currentSocket, int initiator, int th_id)
 {
+	vector<pair<string, string>>::iterator s_it, s_it_g;
 	string log, pass;
 	int mark = -1;
 	log.reserve(10);
@@ -352,15 +439,15 @@ int Server::reg(SOCKET& currentSocket, int initiator, int th_id)
 	//получаем из буффера команды логин и пароль
 	if (cmd_buffer.size() != 0)
 	{
-		vector<string> box_opt = get_opt(true);
-		if (box_opt.size() != 2)
+		vector<string> box_opt = get_opt(false);
+		if (box_opt.size() != 3)
 		{
 			send_data(currentSocket, "ERROR! Invalid command options!\n");
 			return -1;
 		}
 		log = box_opt[0];
 		pass = box_opt[1];
-		mark = to_integer<int>(static_cast<byte>(box_opt[0][0]));
+		mark = to_integer<int>(static_cast<byte>(box_opt[2][0]));
 		mark -= '0';
 	}
 	else {
@@ -431,17 +518,53 @@ int Server::reg(SOCKET& currentSocket, int initiator, int th_id)
 		}
 	}
 
+	int ind = find_user(currentSocket);
+
 	//проверяем не занят ли этот логин
 	if (find_user(log) != -1)
 	{
 		send_data(currentSocket, "ERROR! A user with this username already exists!\n");
+		s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+		for (int i = 0; i < user[ind].group.size(); i++)
+		{
+			s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+			if (s_it_g != logger.tracked_subj.end())
+				break;
+		}
+		if (s_it->second[3] == '1' || s_it_g->second[3] == '1')
+			logger.log(LOGGER::AUTH_m, currentSocket, "Unsuccessful registration. Invalid parameters.", 0);
 		return -1;
 	}
 
-	int ind = find_user(currentSocket);
-	if (user[ind].current_mark < mark)
+	if (initiator == USER)
+	{
+		if (mark > 1)
+		{
+			send_data(currentSocket, "Invalid mark!\n");
+			s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+			for (int i = 0; i < user[ind].group.size(); i++)
+			{
+				s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+				if (s_it_g != logger.tracked_subj.end())
+					break;
+			}
+			if (s_it->second[3] == '1' || s_it_g->second[3] == '1')
+				logger.log(LOGGER::AUTH_m, currentSocket, "Unsuccessful registration. Invalid input mark.", 0);
+			return 0;
+		}
+	}
+	else if (user[ind].current_mark < mark && ind != -1)
 	{
 		send_data(currentSocket, "Invalid mark!\n");
+		s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+		for (int i = 0; i < user[ind].group.size(); i++)
+		{
+			s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+			if (s_it_g != logger.tracked_subj.end())
+				break;
+		}
+		if (s_it->second[3] == '1' || s_it_g->second[3] == '1')
+			logger.log(LOGGER::AUTH_m, currentSocket, "Unsuccessful registration. Invalid input mark.", 0);
 		return 0;
 	}
 
@@ -493,6 +616,16 @@ int Server::reg(SOCKET& currentSocket, int initiator, int th_id)
 	}
 	else
 		send_data(currentSocket, "Successfull! \nThe standard mark of the new user is assigned: 1\n#" + user[users_count - 1].current_path);
+	
+	s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
+	if (s_it->second[3] == '1' || s_it_g->second[3] == '1')
+		logger.log(LOGGER::AUTH_m, currentSocket, "Successful registration of a new user", 0);
 
 	save_users_data();
 	return 0;
@@ -500,6 +633,7 @@ int Server::reg(SOCKET& currentSocket, int initiator, int th_id)
 
 int Server::chmod(SOCKET& currentSocket)
 {
+	vector<pair<string, string>>::iterator s_it, s_it_g;
 	string opt[2],
 		path = SERVER_ROOT_PATH;
 	int ind = find_user(currentSocket);
@@ -538,9 +672,31 @@ int Server::chmod(SOCKET& currentSocket)
 
 		change_level_access(ind_owner, path, opt[1]);
 		send_data(currentSocket, "Successfully!\n#" + user[ind].current_path);
+		
+		s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+		for (int i = 0; i < user[ind].group.size(); i++)
+		{
+			s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+			if (s_it_g != logger.tracked_subj.end())
+				break;
+		}
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed!", 0);
 	}
 	else
+	{
 		send_data(currentSocket, "ERROR! You don't have enough rights to execute this command!\n" + user[ind].current_path);
+
+		s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+		for (int i = 0; i < user[ind].group.size(); i++)
+		{
+			s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+			if (s_it_g != logger.tracked_subj.end())
+				break;
+		}
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access denied!", 0);
+	}
 	return 0;
 }
 
@@ -590,9 +746,18 @@ int Server::help(SOCKET& currentSocket)
 
 int Server::createFile(SOCKET& currentSocket)
 {
+	vector<pair<string, string>>::iterator s_it, s_it_g;
 	string file_name, _access, path = SERVER_ROOT_PATH;
 	int ind = find_user(currentSocket),
 		mark = -1;
+
+	s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
 
 	vector<string> box_opt = get_opt(false);
 	if (box_opt.size() < 2 || box_opt.size() > 3)
@@ -611,6 +776,11 @@ int Server::createFile(SOCKET& currentSocket)
 		}
 		mark = to_integer<int>(static_cast<byte>(box_opt[2][0]));
 		mark -= '0';
+		if (mark < 0)
+		{
+			send_data(currentSocket, "Invalid mark!\n");
+			return 0;
+		}
 	}
 	else {
 		file_name = box_opt[0];
@@ -639,13 +809,23 @@ int Server::createFile(SOCKET& currentSocket)
 	if (ms.get_mark(path) > user[ind].current_mark)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR!\nYou don't have access rights!\n" + user[ind].current_path);
+		
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied", 0);
 		return 0;
+	}
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed", 0);
 	}
 	ofstream file;
 
-	if (access == "0" || access == "1" || access == "4" || access == "5")
+	if (access[0] == '0' || access[0] == '1' || access[0] == '4' || access[0] == '5')
 	{
 		send_data(currentSocket, "DISCRETE MODEL ERROR!\nYou don't have access rights!\n" + user[ind].current_path);
+		
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access denied", 0);
 		return 0;
 	}
 	else
@@ -658,6 +838,10 @@ int Server::createFile(SOCKET& currentSocket)
 		send_data(currentSocket, "ERROR! Created directory end with failed!\n" + user[ind].current_path);
 		return 0;
 	}
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed", 0);
+	}
 
 	//дописываем в значение доступа логин создателя и его группы через слеш
 	_access += user[ind].login;
@@ -666,6 +850,8 @@ int Server::createFile(SOCKET& currentSocket)
 
 	set_level_access(ind, path, _access, mark);
 	send_data(currentSocket, "Successfull!\n" + user[ind].current_path);
+	
+	logger.tracked_obj.push_back(pair<string, string>(path, "000"));
 
 	return 0;
 }
@@ -675,6 +861,15 @@ int Server::deleteFD(SOCKET& currentSocket)
 	int ind = find_user(currentSocket);
 	string dir_name,
 		path = SERVER_ROOT_PATH;
+
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
 
 	dir_name.reserve(15);
 	vector<string> box_opt = get_opt(false);
@@ -720,16 +915,31 @@ int Server::deleteFD(SOCKET& currentSocket)
 		return 0;
 	}
 	string access = get_level_access(ind, path, false);
-	if (access == "0" || access == "1" || access == "4" || access == "5")
+	if (access[0] == '0' || access[0] == '1' || access[0] == '4' || access[0] == '5')
 	{
 		send_data(currentSocket, "DISCRETE MODEL ERROR! \nYou don't have access rights!\n" + user[ind].current_path);
+		
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access denied", 0);
+
 		return 0;
+	} 
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed", 0);
 	}
 	int Maccess = ms.get_mark(path);
 	if (user[ind].current_mark < Maccess)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR! \nYou don't have access rights!\n" + user[ind].current_path);
+	
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied", 0);
 		return 0;
+	}
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed", 0);
 	}
 
 	string temp = SERVER_ROOT_PATH;
@@ -742,22 +952,39 @@ int Server::deleteFD(SOCKET& currentSocket)
 	if (temp == path)
 	{
 		user[ind].current_path = user[ind].home_path;
-		send_data(currentSocket, "Successfull!\n#" + user[ind].current_path);
+		send_data(currentSocket, "Successfully!\n#" + user[ind].current_path);
+		s_it = ranges::find(logger.tracked_obj, path, &pair<string, string>::first);
 
+		if (s_it->second[1] == '1' || s_it_g->second[1] == '1')
+			logger.log(LOGGER::WR_m, currentSocket, "Deleted folder/directory.", 0);
 		return 0;
 	}
-	send_data(currentSocket, "Successfull!\n#" + user[ind].current_path);
+	send_data(currentSocket, "Successfully!\n#" + user[ind].current_path);
+	s_it = ranges::find(logger.tracked_obj, path, &pair<string, string>::first);
 
+	if (s_it->second[1] == '1' || s_it_g->second[1] == '1')
+		logger.log(LOGGER::WR_m, currentSocket, "Deleted folder/directory.", 0);
+
+	if (s_it != logger.tracked_obj.end())
+		logger.tracked_obj.erase(s_it);
 	return 0;
 }
 
 int Server::createDirectory(SOCKET& currentSocket)
 {
+	vector<pair<string, string>>::iterator s_it, s_it_g;
 	int ind = find_user(currentSocket),
 		mark = -1;
 	string dir_name, opt_0, opt_1,
 		path = SERVER_ROOT_PATH;
 
+	s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
 
 	dir_name.reserve(15);
 	vector<string> box_opt = get_opt(false);
@@ -777,6 +1004,11 @@ int Server::createDirectory(SOCKET& currentSocket)
 		}
 		mark = to_integer<int>(static_cast<byte>(box_opt[2][0]));
 		mark -= '0';
+		if (mark > user[ind].def_mark)
+		{
+			send_data(currentSocket, "Invalid mark!\n");
+			return 0;
+		}
 	}
 	else {
 		opt_0 = box_opt[0];
@@ -809,13 +1041,27 @@ int Server::createDirectory(SOCKET& currentSocket)
 	if (Maccess > user[ind].current_mark)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR!\nYou don't have access rights!\n" + user[ind].current_path);
+
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 		return 0;
 	}
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
+	}
 
-	if (access == "0" || access == "1" || access == "4" || access == "5")
+	if (access[0] == '0' || access[0] == '1' || access[0] == '4' || access[0] == '5')
 	{
 		send_data(currentSocket, "DISCRETE MODEL ERROR! \nYou don't have access rights!\n" + user[ind].current_path);
+
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access denied.", 0);
 		return 0;
+	}
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed.", 0);
 	}
 
 	if (fs::create_directories(path) == false)
@@ -857,13 +1103,23 @@ int Server::createDirectory(SOCKET& currentSocket)
 	set_level_access(ind, path, opt_1, mark);
 	send_data(currentSocket, user[ind].current_path.c_str());
 
+	logger.tracked_obj.push_back(pair<string, string>(path, "000"));
 	return 0;
 }
 
 int Server::cd(SOCKET& currentSocket)
 {
+	vector<pair<string, string>>::iterator s_it, s_it_g;
 	string opt, path = SERVER_ROOT_PATH;
 	int ind = find_user(currentSocket);
+
+	s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
 	
 	if (cmd_buffer.size() == 0)
 	{
@@ -899,31 +1155,56 @@ int Server::cd(SOCKET& currentSocket)
 		//проверить доступ к директории в матрице прав
 		string access = get_level_access(ind, path, false);
 
-		if (access == "4" || access == "7" || access == "6" || access == "5")
+		if (access[0] == '4' || access[0] == '7' || access[0] == '6' || access[0] == '5')
 		{
 			int mark = ms.get_mark(path);
 			if (user[ind].current_mark < mark)
 			{
 				send_data(currentSocket, "MANDATE MODEL ERROR! \nYou don't have access rights to this directory!\n#" + user[ind].current_path);
+
+				if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+					logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 				return 0;
+			}
+			else {
+				if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+					logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
 			}
 			if (opt[0] == '\\')
 				user[ind].current_path = "#" + opt;
 			else
 				user[ind].current_path += "\\" + opt;
 			send_data(currentSocket, user[ind].current_path);
+
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed.", 0);
 		}
 		else
+		{
 			send_data(currentSocket, "DISCRETE MODEL ERROR! \nYou don't have access rights to this directory!\n#" + user[ind].current_path);
+		
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access denied.", 0);
+		}
 	}
 	return 0;
 }
 
 int Server::createGroup(SOCKET& currentSocket)
 {
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+
 	int ind = find_user(currentSocket),
 		us_ind;
 	
+	s_it = ranges::find(logger.tracked_subj, user[ind].login, &pair<string, string>::first);
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
+
 	string group, login;
 	vector<string> box_opt = get_opt(false);
 	if (box_opt.size() != 1 && box_opt.size() != 2)
@@ -947,6 +1228,9 @@ int Server::createGroup(SOCKET& currentSocket)
 		if (user[ind].current_mark < user[us_ind].def_mark)
 		{
 			send_data(currentSocket, "MANDATE MODEL ERROR!\nYou don't have enough rights to add this user to the group!\n#" + user[ind].current_path);
+			
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 			return 0;
 		}
 	}
@@ -976,12 +1260,23 @@ int Server::createGroup(SOCKET& currentSocket)
 
 	save_users_data();
 	send_data(currentSocket, "Successfull!\n#" + user[ind].current_path);
+	if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+		logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
+	logger.tracked_obj.push_back(pair<string, string>(group, "000"));
+
 	return 0;
 }
 
 int Server::deleteGroup(SOCKET& currentSocket)
 {
 	int ind = find_user(currentSocket);
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
 
 	string group;
 	vector<string> box_opt = get_opt(false);
@@ -1000,6 +1295,8 @@ int Server::deleteGroup(SOCKET& currentSocket)
 	if (user[ind].current_mark < mark)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR! \nThere are not enough rights to delete such a group!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 		return 0;
 	}
 
@@ -1013,6 +1310,7 @@ int Server::deleteGroup(SOCKET& currentSocket)
 			update_level_access(i);
 		}
 	}
+	ms.delete_marks(group);
 	
 	if (group != user[ind].login)
 	{
@@ -1024,12 +1322,23 @@ int Server::deleteGroup(SOCKET& currentSocket)
 		}
 	}
 	send_data(currentSocket, "Successfull!\n#" + user[ind].current_path);
+	if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+		logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
+
+	logger.tracked_subj.erase(s_it);
 	return 0;
 }
 
 int Server::addUserInGroup(SOCKET& currentSocket)
 {
 	int ind = find_user(currentSocket);
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
 
 	string group, _user;
 	vector<string> box_opt = get_opt(false);
@@ -1059,8 +1368,12 @@ int Server::addUserInGroup(SOCKET& currentSocket)
 			break;
 		else if (i == users_count - 1)
 		{
-			send_data(currentSocket, "ERROR! There is no such group!\n#" + user[ind].current_path);
-			return 0;
+			int _m = ms.get_mark(group);
+			if (_m == -1)
+			{
+				send_data(currentSocket, "ERROR! There is no such group!\n#" + user[ind].current_path);
+				return 0;
+			}
 		}
 	}
 
@@ -1068,6 +1381,8 @@ int Server::addUserInGroup(SOCKET& currentSocket)
 	if (mark == -1)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR! \nKey not found!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 		return 0;
 	}
 	if (user[ind].current_mark < mark)
@@ -1081,6 +1396,10 @@ int Server::addUserInGroup(SOCKET& currentSocket)
 	add_level_access(user_ind, group);
 	save_users_data();
 	send_data(currentSocket, "Successfull!\n#" + user[ind].current_path);
+	if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+		logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
+
+	logger.tracked_subj.push_back(pair<string, string>(_user, "00000"));
 
 	return 0;
 }
@@ -1088,6 +1407,14 @@ int Server::addUserInGroup(SOCKET& currentSocket)
 int Server::deleteUserInGroup(SOCKET& currentSocket)
 {
 	int ind = find_user(currentSocket);
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
+
 	string group, _user;
 	vector<string> box_opt = get_opt(false);
 	if (box_opt.size() != 2)
@@ -1122,7 +1449,13 @@ int Server::deleteUserInGroup(SOCKET& currentSocket)
 	if (user[ind].current_mark < user[user_ind].def_mark)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR! \nYou do not have the rights to execute this command for this user!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 		return 0;
+	}
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
 	}
 
 	
@@ -1134,18 +1467,16 @@ int Server::deleteUserInGroup(SOCKET& currentSocket)
 		send_data(currentSocket, "ERROR! A group with that name was not found!\nThe command is not executed.\n#" + user[ind].current_path);
 		return 0;
 	}
-	user[user_ind].group.erase(it);
 
-	int i = 0;
+	int i = 0, count =0;
 	for (i; i<users_count; i++)
 	{
 		if (find(user[i].group.begin(), user[i].group.end(), group) != user[i].group.end())
 		{
-			i = -10;
-			break;
+			count++;
 		}
 	}
-	if (i == -10)
+	if (count != 0)
 	{
 		for (_it = LMatrix.begin(); _it != LMatrix.end(); _it++)
 		{
@@ -1159,9 +1490,10 @@ int Server::deleteUserInGroup(SOCKET& currentSocket)
 				}
 			}
 		}
-		ms.delete_marks(group);
+		//if(count == 1)
+		//	ms.delete_marks(group);
 	}
-
+	user[user_ind].group.erase(it);
 	//update matrix 
 	update_level_access(user_ind);
 
@@ -1176,6 +1508,13 @@ int Server::write(SOCKET& currentSocket, bool APP_FL)
 	string data, file_name;
 	int ind = find_user(currentSocket),
 		mark = -1;
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
 
 	vector<string> box_opt = get_opt(false);
 	if (box_opt.size() != 2)
@@ -1205,19 +1544,53 @@ int Server::write(SOCKET& currentSocket, bool APP_FL)
 	}
 	//проверить доступ к файлу в матрице прав
 	string access = get_level_access(ind, path, false);
-	if (access == "2" || access == "3" || access == "6" || access == "7")
+	if (access[0] == '2' || access[0] == '3' || access[0] == '6' || access[0] == '7')
 	{
-		mark = ms.get_mark(path);
-		if (user[ind].current_mark < mark)
-		{
-			send_data(currentSocket, "MANDATE MODEL ERROR! You don't have write access to this file!\n#" + user[ind].current_path);
-			return 0;
-		}
 		fstream file;
-		if (APP_FL)
-			file.open(path, ios::app);
-		else
+		if (!APP_FL)
+		{
+			mark = ms.get_mark(path);
+			if (user[ind].current_mark != mark)
+			{
+				send_data(currentSocket, "MANDATE MODEL ERROR! You don't have append access to this file!\n#" + user[ind].current_path);
+				if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+					logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
+				return 0;
+			}
+			mark = to_integer<int>(static_cast<byte>(access[1])) - '0';
+			if (user[ind].current_mark != mark && mark != -1)
+			{
+				send_data(currentSocket, "MANDATE MODEL ERROR! You don't have append access to this file!\n#" + user[ind].current_path);
+				if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+					logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
+				return 0;
+			}
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
 			file.open(path, ios::out);
+		}
+		else {
+			mark = ms.get_mark(path);
+			if (user[ind].current_mark > mark && mark != -1)
+			{
+				send_data(currentSocket, "MANDATE MODEL ERROR! You don't have write access to this file!\n#" + user[ind].current_path);
+				if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+					logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
+				return 0;
+			}
+			mark = to_integer<int>(static_cast<byte>(access[1])) - '0';
+			if (user[ind].current_mark > mark && mark != -1)
+			{
+				send_data(currentSocket, "MANDATE MODEL ERROR! You don't have write access to this file!\n#" + user[ind].current_path);
+				if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+					logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
+				return 0;
+			}
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
+			file.open(path, ios::app);
+		}
+
 		if (!file.is_open())
 		{
 			send_data(currentSocket, "Internal server error! Couldn't open the file " + file_name + "\n#" + user[ind].current_path);
@@ -1225,11 +1598,42 @@ int Server::write(SOCKET& currentSocket, bool APP_FL)
 		}
 		file << data;
 		file.close();
-		send_data(currentSocket, "successfull!\n#" + user[ind].current_path);
+		send_data(currentSocket, "successfully!\n#" + user[ind].current_path);
+
+		if (s_it->second[2] == '1' || s_it_g->second[2] == '1')
+			logger.log(LOGGER::APP_m, currentSocket, path, 0);
+
+		if (APP_FL)
+		{
+			if (s_it->second[2] == '1' || s_it_g->second[2] == '1')
+				logger.log(LOGGER::APP_m, currentSocket, path, 0);
+
+			vector<pair<string, string>>::iterator it = ranges::find(logger.tracked_obj, path,
+				&std::pair<std::string, string>::first);
+			if (it != logger.tracked_obj.end())
+			{
+				if (it->second[2] == '1')
+					logger.log(LOGGER::APP_m, currentSocket, path, 0);
+			}
+		}
+		else {
+			if (s_it->second[1] == '1' || s_it_g->second[1] == '1')
+				logger.log(LOGGER::WR_m, currentSocket, path, 0);
+
+			vector<pair<string, string>>::iterator it = ranges::find(logger.tracked_obj, path,
+				&std::pair<std::string, string>::first);
+			if (it != logger.tracked_obj.end())
+			{
+				if (it->second[1] == '1')
+					logger.log(LOGGER::WR_m, currentSocket, path, 0);
+			}
+		}
 	}
 	else
 	{
 		send_data(currentSocket, "DISCRETE MODEL ERROR! You don't have write access to this file!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed.", 0);
 		return 0;
 	}
 
@@ -1240,6 +1644,14 @@ int Server::read(SOCKET& currentSocket)
 {
 	int ind = find_user(currentSocket),
 		mark = -1;
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
+
 	string data, file_name, tmp;
 	vector<string> box_opt = get_opt(false);
 	if (box_opt.size() != 1)
@@ -1269,14 +1681,26 @@ int Server::read(SOCKET& currentSocket)
 
 	//проверить доступ к файлу в матрице прав
 	string access = get_level_access(ind, path, false);
-	if (access == "1" || access == "3" || access == "5" || access == "7")
+	if (access[0] == '1' || access[0] == '3' || access[0] == '5' || access[0] == '7')
 	{
 		mark = ms.get_mark(path);
 		if (user[ind].current_mark < mark)
 		{
 			send_data(currentSocket, "MANDATE MODEL ERROR! You don't have access to this file!\n#" + user[ind].current_path);
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied", 0);
 			return 0;
 		}
+		int cur_mark = to_integer<int>(static_cast<byte>(access[1])) - '0';
+		if (user[ind].current_mark < cur_mark)
+		{
+			send_data(currentSocket, "MANDATE MODEL ERROR! You don't have access to this file!\n#" + user[ind].current_path);
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
+			return 0;
+		}
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
 		fstream file;
 		file.open(path, ios::in);
 		if (!file.is_open())
@@ -1293,11 +1717,24 @@ int Server::read(SOCKET& currentSocket)
 		}
 		file.close();
 		send_data(currentSocket, data + "\n#" + user[ind].current_path);
+
+		vector<pair<string, string>>::iterator it = ranges::find(logger.tracked_obj, path,
+			&std::pair<std::string, string>::first);
+		if (it != logger.tracked_obj.end())
+		{
+			if(it->second[0] == '1')
+				logger.log(LOGGER::R_m, currentSocket, path, 0);
+		}
+		if (s_it->second[0] == '1' || s_it_g->second[0] == '1')
+			logger.log(LOGGER::R_m, currentSocket, path, 0);
+
 		return 0;
 	}
 	else
 	{
 		send_data(currentSocket, "DISCRETE MODEL ERROR! You don't have read access to this file!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed.", 0);
 		return 0;
 	}
 
@@ -1310,6 +1747,13 @@ int Server::ls(SOCKET& currentSocket)
 	vector<string> box;
 	string path, opt;
 	int ind = find_user(currentSocket);
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
 
 	path.reserve(50);
 	path = SERVER_ROOT_PATH;
@@ -1332,21 +1776,36 @@ int Server::ls(SOCKET& currentSocket)
 		path += user[ind].current_path;
 
 	string access = get_level_access(ind, path, false);
-	if (access == "2" || access == "4" || access == "6")
+	if (access[0] == '2' || access[0] == '4' || access[0] == '6')
 	{
 		send_data(currentSocket, "DISCRETE MODEL ERROR!\nNot enough rights to view this directory!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access denied.", 0);
 		return 0;
 	}
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed.", 0);
+	}
+
 	int mark = ms.get_mark(path);
 	if (mark == -1)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR! \nKey was not found!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 		return 0;
 	}
 	if (user[ind].current_mark < mark)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR!\nNot enough rights to view this directory!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 		return 0;
+	}
+	else {
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "DISCRETE MODEL: access is allowed.", 0);
 	}
 
 	if (check_path(opt, DIR_FL) == INV_SYMBOL_IN_PATH)
@@ -1393,7 +1852,15 @@ int Server::logout(SOCKET& currentSocket, int th_id)
 	save_users_data();
 
 	user[cl_id].cur_sock = 0;
-
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	for (int i = 0; i < user[cl_id].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[cl_id].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
+	if (s_it->second[3] == '1' || s_it_g->second[3] == '1')
+		logger.log(LOGGER::AUTH_m, currentSocket, "The user " + user[cl_id].login + " is disabled", 0);
 	//добавляем освободившийся индекс в стек
 	free_index.push(th_id);
 	return EXIT;
@@ -1415,6 +1882,7 @@ int Server::createUser(SOCKET& currentSocket, int th_id)
 int Server::deleteUser(SOCKET& currentSocket, int th_id)
 {
 	int ind = find_user(currentSocket);
+
 	if (user[ind].status < ADMIN)
 	{
 		send_data(currentSocket, "ERROR! To execute this command, you must have an ADMIN access level and higher.\n#" + user[ind].current_path);
@@ -1594,6 +2062,7 @@ int Server::listUser(SOCKET& currentSocket)
 	result.reserve(300);
 	for (int i = 1; i < users_count; i++)
 	{
+		result += "\n----------------------\n";
 		result += "\nLOGIN: " + user[i].login;
 		if (user[i].status == USER)
 			result += "\nSTATUS: user";
@@ -1603,6 +2072,7 @@ int Server::listUser(SOCKET& currentSocket)
 			result += "\nAUTHORIZE: authorize";
 		else
 			result += "\nAUTHORIZE: not authorize ";
+		result += "\nDEF. MARK: " + to_string(user[i].def_mark);
 
 		result += "\nCURR. SOCKET: " + to_string(user[i].cur_sock);
 		result += "\nUSERS GROUPS : ";
@@ -1610,9 +2080,8 @@ int Server::listUser(SOCKET& currentSocket)
 		{
 			result += user[i].group[j] + " ";
 		}
-		result += "\n-------------------\n";
 	}
-
+	result += "\n###################################";
 	send_data(currentSocket, result + "\n#" + user[ind].current_path);
 	return 0;
 }
@@ -1680,6 +2149,14 @@ int Server::cm(SOCKET& currentSocket)
 		send_data(currentSocket, str_mark + "\n#" + user[ind].current_path);
 		return 0;
 	}
+	mark = ms.get_mark(object);
+	if (mark != -1)
+	{
+		string str_mark = "Current mark for an object: ";
+		str_mark += to_string(mark);
+		send_data(currentSocket, str_mark + "\n#" + user[ind].current_path);
+		return 0;
+	}
 	string _object = SERVER_ROOT_PATH;
 	if (object[0] == '\\')
 		_object += object;
@@ -1706,6 +2183,14 @@ int Server::chM(SOCKET& currentSocket)
 {
 	int ind = find_user(currentSocket),
 		mark = -1;
+	vector<pair<string, string>>::iterator s_it, s_it_g;
+	for (int i = 0; i < user[ind].group.size(); i++)
+	{
+		s_it_g = ranges::find(logger.tracked_subj, user[ind].group[i], &pair<string, string>::first);
+		if (s_it_g != logger.tracked_subj.end())
+			break;
+	}
+
 	vector<string> box_opt = get_opt(false);
 	if (box_opt.size() != 2)
 	{
@@ -1719,6 +2204,27 @@ int Server::chM(SOCKET& currentSocket)
 	}
 
 	string object = box_opt[0];
+
+	if (mark = ms.get_mark(object) != -1)
+	{
+		if (mark > user[ind].current_mark)
+		{
+			send_data(currentSocket, "MANDATE MODEL ERROR!\n It is not possible to set a mark higher than your current mark!\n#" + user[ind].current_mark);
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
+			return -1;
+		}
+		else {
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
+		}
+
+		mark = to_integer<int>(static_cast<byte>(box_opt[1][0]));
+		mark -= '0';
+		ms.change_mark(object, mark);
+		send_data(currentSocket, "Successfull!\n#" + user[ind].current_path);
+		return 0;
+	}
 	int _ind = find_user(object);
 	if (_ind == -1)
 	{
@@ -1737,7 +2243,13 @@ int Server::chM(SOCKET& currentSocket)
 		if (mark > user[ind].current_mark)
 		{
 			send_data(currentSocket, "MANDATE MODEL ERROR!\n It is not possible to set a mark higher than your current mark!\n#" + user[ind].current_mark);
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 			return -1;
+		}
+		else {
+			if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+				logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
 		}
 
 		mark = to_integer<int>(static_cast<byte>(box_opt[1][0]));
@@ -1750,6 +2262,8 @@ int Server::chM(SOCKET& currentSocket)
 	if (user[ind].current_mark < user[_ind].current_mark)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR! \nYou do not have access to change the label for this object/subject!\n#" + user[ind].current_path);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 		return -1;
 	}
 	mark = to_integer<int>(static_cast<byte>(box_opt[1][0]));
@@ -1757,10 +2271,14 @@ int Server::chM(SOCKET& currentSocket)
 	if (mark > user[ind].current_mark)
 	{
 		send_data(currentSocket, "MANDATE MODEL ERROR!\n It is not possible to set a mark higher than your current mark!\n#" + user[ind].current_mark);
+		if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+			logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access denied.", 0);
 		return -1;
 	}
 
 	user[_ind].def_mark = mark;
 	send_data(currentSocket, "Successfull!\n#" + user[ind].current_path);
+	if (s_it->second[4] == '1' || s_it_g->second[4] == '1')
+		logger.log(LOGGER::ACC_m, currentSocket, "MANDATE MODEL: access is allowed.", 0);
 	return 0;
 }

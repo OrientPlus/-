@@ -19,6 +19,8 @@
 #include <map>
 #include <set>
 #include <algorithm>
+#include <queue>
+#include <ctime>
 
 #include <openssl/sha.h>
 
@@ -34,6 +36,8 @@
 #define USERS_DATA_PATH "usersData.txt"
 #define SERVER_ROOT_PATH "C:\\Users\\gutro\\Desktop\\server_root"
 #define MAND_SYS_PATH "mandSys.txt"
+#define LOG_JOURNAL_PATH "log_journal.txt"
+#define ATTRIBUTE_OBJ_SUBJ "attribute_obj_subj.txt"
 
 #define DIR_FL 1
 #define FILE_FL 2
@@ -91,11 +95,32 @@ private:
 		int cur_sock, status, th_id;
 		int current_mark, def_mark;
 	};
-
-
 	USERS* user;
 	USERS* reallocated(int size);
 	size_t users_count;
+
+	class LOGGER {
+	public:
+		USERS log_user;
+		bool in_work;
+		fstream file;
+		int write_mode, read_mode, append_mode, authorize_mode, access_mode;
+		deque<string> journal;
+		vector<pair<string, string>> tracked_obj, tracked_subj;
+		size_t journal_size;
+
+		enum {WR_m, R_m, APP_m, AUTH_m, ACC_m};
+		int log(int log_fl, SOCKET sock, string log, int n);
+		int change_mod();
+		string show_modes();
+		string show_journal();
+		int clear_journal();
+		int change_journal_size();
+
+		int save_journal();
+		int load_journal();
+	};
+	LOGGER logger;
 
 	//стек свободных индексов для потоков
 	stack<int> free_index;
@@ -108,7 +133,7 @@ private:
 	string  _buffer, command, cmd_buffer,
 		help_all_cmd, help_cmds[25];
 
-	string supported_commands[25] = { "help", "reg", "auth", "rr", "write", "read",
+	vector<string> supported_commands = { "help", "reg", "auth", "rr", "write", "read",
 		"ls", "logout", "chmod", "crF", "crD", "del", "cd", "crGr", "delGr", "addUnG",
 	"delUnG", "crUser", "delUser", "chLUser", "chPUser", "listUser", "cm", "chM", "append"};
 
@@ -188,3 +213,6 @@ public:
 	Server();
 	~Server();
 };
+
+//лютый костыль, чтобы вложенный класс дотянулся до методов класса Server
+Server *ptrS = nullptr;

@@ -66,15 +66,53 @@ int Server::pars_command(SOCKET& currentSocket, int th_id)
 	if (help_buf.size() == 0)
 		cmd_buffer.clear();
 
-	//ищем команду в БД команд
-	for (int i = 0; i < 25; i++)
+	int ind = find_user(currentSocket);
+	if (ind != -1 && user[ind].login == "logger")
+	{
+		if (command == "change_mod")
+		{
+			int answer = logger.change_mod();
+			if (answer != 1)
+				send_data(currentSocket, "ERROR!\n" + user[ind].current_path);
+			else
+				send_data(currentSocket, "Successfully!\n" + user[ind].current_path);
+		}
+		else if (command == "show_modes_set")
+		{
+			string answer = logger.show_modes();
+			send_data(currentSocket, answer + user[ind].current_path);
+		}
+		else if (command == "show_journal")
+		{
+			string answer = logger.show_journal();
+			send_data(currentSocket, answer + user[ind].current_path);
+		}
+		else if (command == "clear_journal")
+		{
+			logger.clear_journal();
+			send_data(currentSocket, "Successfully!\n" + user[ind].current_path);
+		}
+		else if (command == "change_journal_size")
+		{
+			int answ = logger.change_journal_size();
+			if(answ == 1)
+				send_data(currentSocket, "Successfully!\n" + user[ind].current_path);
+		}
+		else {
+			return INV_CMD;
+		}
+		return 0;
+	}
+
+	//ищем команду в списке поддерживаемых команд сервера
+	for (int i = 0; i < supported_commands.size(); i++)
 	{
 		if (command == supported_commands[i])
 		{
 			switch_on = i;
 			break;
 		}
-		else if (i == 24)
+		else if (i == supported_commands.size() -1)
 		{
 			command.clear();
 			cmd_buffer.clear();
@@ -82,8 +120,12 @@ int Server::pars_command(SOCKET& currentSocket, int th_id)
 		}
 	}
 
+
 	switch (switch_on)
 	{
+	case 25:
+		ret = authorize(currentSocket, th_id);
+		return ret;
 	case 24:
 		if (logged_in(currentSocket))
 			ret = write(currentSocket, true);
@@ -260,10 +302,14 @@ string Server::get_level_access(int ind, string path, bool INFO_FL)
 
 	pair<string, string> key = make_pair<string, string>(user[ind].login.c_str(), path.c_str());
 	string access;
-
+	
+	int mark = -1;
 	//ищем в матрице ключ подходящий для конкретного юзера
 	if (LMatrix.find(key) != LMatrix.end())
+	{
 		access = LMatrix.find(key)->second;
+		mark = ms.get_mark(user[ind].login);
+	}
 	else
 	{
 		for (int i = 0; i < user[ind].group.size(); i++)
@@ -271,12 +317,16 @@ string Server::get_level_access(int ind, string path, bool INFO_FL)
 			if (LMatrix.find(make_pair<string, string>(user[ind].group[i].c_str(), path.c_str())) != LMatrix.end())
 			{
 				access = LMatrix.find(make_pair<string, string>(user[ind].group[i].c_str(), path.c_str()))->second;
+				mark = ms.get_mark(user[ind].group[i]);
 				break;
 			}
 		}
 	}
 	if (access.empty())
+	{
 		access = LMatrix.find(make_pair<string, string>(OTHER_GROUP, path.c_str()))->second;
+		mark = ms.get_mark(user[ind].login);
+	}
 
 	if (access.empty())
 	{
@@ -284,20 +334,36 @@ string Server::get_level_access(int ind, string path, bool INFO_FL)
 		return "0";
 	}
 	if (INFO_FL)
+	{
+		//logged this
 		return access;
+	}
 
 	string owner, _gr;
 	vector<string> groups;
 
 	//выделяем владельца и группы для данного пути
 	int it = 3;
-	while (access[it] != '/' && access[it] != '\0')
+	bool fl = false;
+	while ( access[it] != '\0')
 	{
-		owner += access[it];
+		if (access[it] == '/')
+			fl = true;
+		if (!fl)
+			owner += access[it];
+
+		if (access[it] == '/' || access[it] == '\0')
+		{
+			groups.push_back(_gr);
+			_gr.clear();
+			it++;
+			continue;
+		}
+		_gr += access[it];
 		it++;
 	}
-	it++;
-	while (access[it] != '\0')
+	groups.push_back(_gr);
+	/*while (access[it] != '\0')
 	{
 		if (access[it] == '/')
 		{
@@ -309,7 +375,7 @@ string Server::get_level_access(int ind, string path, bool INFO_FL)
 		_gr += access[it];
 		it++;
 	}
-	groups.push_back(_gr);
+	groups.push_back(_gr);*/
 
 	//если статус юзера который запрашивает права выше, чем статус владельца, то вернуть значение полного доступа
 	int _ind = find_user(owner);
@@ -335,6 +401,9 @@ string Server::get_level_access(int ind, string path, bool INFO_FL)
 	}
 	if (_access.empty())
 		_access = access[2];
+
+	if (mark != -1)
+		_access += to_string(mark);
 	return _access;
 }
 
@@ -637,6 +706,7 @@ int Server::MANDSYS::change_mark(string key, int value)
 	else
 	{
 		it->second = value;
+		save_marks();
 		return 0;
 	}
 }
@@ -1007,4 +1077,182 @@ int Server::send_data(SOCKET& currentSocket)
 	else {
 		cout << endl << currentSocket << " :: successfully\n";
 	}
+}
+
+
+//______________________________________________________
+//        Работа с логгированием сервера               |
+//------------------------------------------------------
+int Server::LOGGER::log(int log_fl, SOCKET sock, string log, int n)
+{
+	static int update_counter = 0;
+	int ind = ptrS->find_user(sock);
+	string tmp_log;
+	switch (log_fl)
+	{
+	case AUTH_m:
+		tmp_log = "AUTHORIZE LOG";
+		tmp_log += "\nNumber of attempts: " + to_string(n);
+		tmp_log += "\nEVENT: " + log;
+		if (ind != -1)
+			tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
+		tmp_log += "\nSOCKET: " + to_string(sock);
+		time_t now = time(0);
+		char* ptr = ctime(&now);
+		tmp_log += "\nTIME: " + *(ptr);
+		tmp_log += "\nIP: localhost";
+		tmp_log += "\n----------------------------------------\n";
+
+		break;
+	case WR_m:
+		tmp_log = "WRITE LOG";
+		tmp_log += "\nOBJECT: " + log;
+		tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
+		tmp_log += "\n----------------------------------------\n";
+		
+		break;
+	case R_m:
+		tmp_log = "READ LOG";
+		tmp_log += "\nOBJECT: " + log;
+		tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
+		tmp_log += "\n----------------------------------------\n";
+
+		break;
+	case APP_m:
+		tmp_log = "APPEND LOG";
+		tmp_log += "\nOBJECT: " + log;
+		tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
+		tmp_log += "\n----------------------------------------\n";
+
+		break;
+	case ACC_m:
+		tmp_log = "ACCES LOG";
+		tmp_log += "\nEVENT: " + log;
+		tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
+		tmp_log += "\n----------------------------------------\n";
+		
+		break;
+	default:
+		tmp_log = "OTHER LOG";
+		tmp_log += "\nEVENT: " + log;
+		tmp_log += "\n----------------------------------------\n";
+		break;
+	}
+
+	if (journal.size() == journal_size)
+		journal.pop_front();
+	
+	journal.push_back(tmp_log);
+	update_counter++;
+
+	if (update_counter == journal_size / 2)
+	{	
+		update_counter = 0;
+		save_journal();
+		clear_journal();
+	}
+	return 1;
+}
+
+string Server::LOGGER::show_modes()
+{
+	string answer = "Current logging options:\n";
+	if (this->write_mode) answer += "WRITE MODE ------- on\n";
+	else
+		answer += "WRITE MODE ------- off\n";
+	
+	if (this->read_mode) answer += "READ MODE -------- on\n";
+	else
+		answer += "READ MODE -------- off\n";
+	
+	if (this->append_mode) answer += "APPEND MODE ------ on\n";
+	else
+		answer += "APPEND MODE ------ off\n";
+
+	if (this->authorize_mode) answer += "AUTHORIZE MODE --- on\n";
+	else
+		answer += "AUTHORIZE MODE --- off\n";
+
+	if (this->access_mode) answer += "ACCESS MODE ------ on\n";
+	else
+		answer += "ACCESS MODE ------ off\n";
+
+	answer += "Logging size ----- " + to_string(this->journal_size) + "\n\n";
+
+	return answer;
+}
+
+int Server::LOGGER::clear_journal()
+{
+	journal.clear();
+	fstream file;
+	file.open(LOG_JOURNAL_PATH, ios::out);
+	file.close();
+	return 1;
+}
+
+int Server::LOGGER::change_mod()
+{
+	vector<pair<string, string>>::iterator it;
+
+	vector<string> box_opt = ptrS->get_opt(false);
+	int new_size;
+
+	if (box_opt.size() == 0)
+		return 0;
+
+	if(box_opt[1] == "-r")
+	{
+		it = ranges::find(tracked_subj, box_opt[0],
+			&std::pair<std::string, string>::first);
+		if (it != tracked_subj.end())
+			it->second[0] = '1';
+		else
+			return 0;
+	}
+	else if (box_opt[1] == "-w")
+	{
+		it = ranges::find(tracked_subj, box_opt[0],
+			&std::pair<std::string, string>::first);
+		if (it != tracked_subj.end())
+			it->second[1] = '1';
+		else
+			return 0;
+	}
+	else if (box_opt[1] == "-a")
+	{
+		it = ranges::find(tracked_subj, box_opt[0],
+			&std::pair<std::string, string>::first);
+		if (it != tracked_subj.end())
+			it->second[2] = '1';
+		else
+			return 0;
+	}
+
+	return 1;
+}
+
+int Server::LOGGER::change_journal_size()
+{
+	vector<string> box_opt = ptrS->get_opt(false);
+	int new_size;
+
+	if (box_opt.size() != 1)
+		new_size = atoi(box_opt[0].c_str());
+	else
+		return 0;
+	journal_size = new_size;
+	return 1;
+}
+
+string Server::LOGGER::show_journal()
+{
+	string answer;
+	deque<string>::iterator it = journal.begin();
+	for (int i = 0; i < journal_size; i++)
+	{
+		answer += *it;
+		it++;
+	}
+	return answer;
 }
