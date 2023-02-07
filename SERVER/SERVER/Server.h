@@ -29,7 +29,7 @@
 #define PRIORITY "priority"
 #define OTHER_GROUP "other_group"
 
-#define MAX_LOAD 5
+#define MAX_LOAD 10
 #define CMD_COUNT 24;
 
 #define MATRIX_LAW_PATH "LawMatrix.txt"
@@ -51,6 +51,35 @@
 using namespace std;
 namespace fs = std::filesystem;
 
+//class LOGGER {
+//public:
+//	deque<string> journal;
+//	vector<pair<string, string>> tracked_obj, tracked_subj;
+//	size_t journal_size;
+//	fstream file;
+//	bool in_work;
+//	enum { WR_m, R_m, APP_m, AUTH_m, ACC_m };
+//
+//	Server* ptr_server;
+//
+//	int log(int log_fl, SOCKET sock, string log, int n);
+//	int change_mod();
+//	string show_modes();
+//	string show_journal();
+//	int clear_journal();
+//	int change_journal_size();
+//
+//	int init_log_user();
+//
+//	int save_journal();
+//	int load_journal();
+//	int save_attr();
+//	int load_attr();
+//
+//	//LOGGER(Server* ptr);
+//};
+
+
 class Server
 {
 private:
@@ -60,6 +89,29 @@ private:
 	ADDRINFO* addrResult;
 	SOCKET ClientSocket[MAX_LOAD] = { INVALID_SOCKET }, ListenSocket;
 	thread th[MAX_LOAD];
+
+	//=================LOG SERVER====================================================
+	deque<string> journal;
+	vector<pair<string, string>> tracked_obj, tracked_subj;
+	size_t journal_size;
+	fstream file;
+	bool in_work;
+	enum { WR_m, R_m, APP_m, AUTH_m, ACC_m };
+
+	int log(int log_fl, SOCKET sock, string log, int n);
+	int change_mod();
+	string show_modes();
+	string show_journal();
+	int clear_journal();
+	int change_journal_size();
+
+	int init_log_user();
+
+	int save_journal();
+	int load_journal();
+	int save_attr();
+	int load_attr();
+	//===============================================================================
 
 
 	//матрица прав пользователей / (login/group + path) -> access
@@ -98,29 +150,6 @@ private:
 	USERS* user;
 	USERS* reallocated(int size);
 	size_t users_count;
-
-	class LOGGER {
-	public:
-		USERS log_user;
-		bool in_work;
-		fstream file;
-		int write_mode, read_mode, append_mode, authorize_mode, access_mode;
-		deque<string> journal;
-		vector<pair<string, string>> tracked_obj, tracked_subj;
-		size_t journal_size;
-
-		enum {WR_m, R_m, APP_m, AUTH_m, ACC_m};
-		int log(int log_fl, SOCKET sock, string log, int n);
-		int change_mod();
-		string show_modes();
-		string show_journal();
-		int clear_journal();
-		int change_journal_size();
-
-		int save_journal();
-		int load_journal();
-	};
-	LOGGER logger;
 
 	//стек свободных индексов для потоков
 	stack<int> free_index;
@@ -213,6 +242,3 @@ public:
 	Server();
 	~Server();
 };
-
-//лютый костыль, чтобы вложенный класс дотянулся до методов класса Server
-Server *ptrS = nullptr;

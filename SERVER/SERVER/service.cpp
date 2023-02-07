@@ -69,35 +69,37 @@ int Server::pars_command(SOCKET& currentSocket, int th_id)
 	int ind = find_user(currentSocket);
 	if (ind != -1 && user[ind].login == "logger")
 	{
-		if (command == "change_mod")
+		if (command == "change_attr")
 		{
-			int answer = logger.change_mod();
+			int answer = change_mod();
 			if (answer != 1)
 				send_data(currentSocket, "ERROR!\n" + user[ind].current_path);
 			else
 				send_data(currentSocket, "Successfully!\n" + user[ind].current_path);
 		}
-		else if (command == "show_modes_set")
+		else if (command == "show_attr")
 		{
-			string answer = logger.show_modes();
+			string answer = show_modes();
 			send_data(currentSocket, answer + user[ind].current_path);
 		}
 		else if (command == "show_journal")
 		{
-			string answer = logger.show_journal();
+			string answer = show_journal();
 			send_data(currentSocket, answer + user[ind].current_path);
 		}
 		else if (command == "clear_journal")
 		{
-			logger.clear_journal();
+			clear_journal();
 			send_data(currentSocket, "Successfully!\n" + user[ind].current_path);
 		}
 		else if (command == "change_journal_size")
 		{
-			int answ = logger.change_journal_size();
-			if(answ == 1)
+			int answ = change_journal_size();
+			if (answ == 1)
 				send_data(currentSocket, "Successfully!\n" + user[ind].current_path);
 		}
+		else if (command == "logout" && user[ind].auth_token == true)
+			return logout(currentSocket, th_id);
 		else {
 			return INV_CMD;
 		}
@@ -1083,63 +1085,63 @@ int Server::send_data(SOCKET& currentSocket)
 //______________________________________________________
 //        Работа с логгированием сервера               |
 //------------------------------------------------------
-int Server::LOGGER::log(int log_fl, SOCKET sock, string log, int n)
+int Server::log(int log_fl, SOCKET sock, string log, int n)
 {
+	if (!in_work)
+		return 0;
 	static int update_counter = 0;
-	int ind = ptrS->find_user(sock);
-	string tmp_log;
+	int ind = find_user(sock);
+	string tmp_log = "\n----------------------------------------\n";
+	time_t now = time(0);
+	char* ptr = ctime(&now);
+	string _time = ptr;
+	if (journal_size == 0)
+		return -1;
+	
 	switch (log_fl)
 	{
 	case AUTH_m:
-		tmp_log = "AUTHORIZE LOG";
+		tmp_log += "AUTHORIZE LOG";
 		tmp_log += "\nNumber of attempts: " + to_string(n);
 		tmp_log += "\nEVENT: " + log;
 		if (ind != -1)
-			tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
+			tmp_log += "\nLOGIN: " + user[ind].login;
 		tmp_log += "\nSOCKET: " + to_string(sock);
-		time_t now = time(0);
-		char* ptr = ctime(&now);
-		tmp_log += "\nTIME: " + *(ptr);
+		tmp_log += "\nTIME: " + _time;
 		tmp_log += "\nIP: localhost";
-		tmp_log += "\n----------------------------------------\n";
 
 		break;
 	case WR_m:
-		tmp_log = "WRITE LOG";
+		tmp_log += "WRITE LOG";
 		tmp_log += "\nOBJECT: " + log;
-		tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
-		tmp_log += "\n----------------------------------------\n";
+		tmp_log += "\nLOGIN: " + user[ind].login;
 		
 		break;
 	case R_m:
-		tmp_log = "READ LOG";
+		tmp_log += "READ LOG";
 		tmp_log += "\nOBJECT: " + log;
-		tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
-		tmp_log += "\n----------------------------------------\n";
+		tmp_log += "\nLOGIN: " + user[ind].login;
 
 		break;
 	case APP_m:
-		tmp_log = "APPEND LOG";
+		tmp_log += "APPEND LOG";
 		tmp_log += "\nOBJECT: " + log;
-		tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
-		tmp_log += "\n----------------------------------------\n";
+		tmp_log += "\nLOGIN: " + user[ind].login;
 
 		break;
 	case ACC_m:
-		tmp_log = "ACCES LOG";
+		tmp_log += "ACCES LOG";
 		tmp_log += "\nEVENT: " + log;
-		tmp_log += "\nLOGIN: " + ptrS->user[ind].login;
-		tmp_log += "\n----------------------------------------\n";
+		tmp_log += "\nLOGIN: " + user[ind].login;
 		
 		break;
 	default:
-		tmp_log = "OTHER LOG";
+		tmp_log += "OTHER LOG";
 		tmp_log += "\nEVENT: " + log;
-		tmp_log += "\n----------------------------------------\n";
 		break;
 	}
 
-	if (journal.size() == journal_size)
+	if (journal.size() == journal_size && journal_size != 0)
 		journal.pop_front();
 	
 	journal.push_back(tmp_log);
@@ -1149,40 +1151,50 @@ int Server::LOGGER::log(int log_fl, SOCKET sock, string log, int n)
 	{	
 		update_counter = 0;
 		save_journal();
-		clear_journal();
 	}
 	return 1;
 }
 
-string Server::LOGGER::show_modes()
+string Server::show_modes()
 {
-	string answer = "Current logging options:\n";
-	if (this->write_mode) answer += "WRITE MODE ------- on\n";
-	else
-		answer += "WRITE MODE ------- off\n";
-	
-	if (this->read_mode) answer += "READ MODE -------- on\n";
-	else
-		answer += "READ MODE -------- off\n";
-	
-	if (this->append_mode) answer += "APPEND MODE ------ on\n";
-	else
-		answer += "APPEND MODE ------ off\n";
+	string answer = "\n=====Current logging options=======";
+	vector<string> box_opt = get_opt(false);
+	if (box_opt.size() == 0)
+		return "ERROR! INVALID COMMAND ARGUMENTS!\n";
+	string obj = box_opt[0];
 
-	if (this->authorize_mode) answer += "AUTHORIZE MODE --- on\n";
-	else
-		answer += "AUTHORIZE MODE --- off\n";
+	vector<pair<string, string>>::iterator it, s_it;
+	it = ranges::find(tracked_obj, obj, &pair<string, string>::first);
+	s_it = ranges::find(tracked_subj, obj, &pair<string, string>::first);
 
-	if (this->access_mode) answer += "ACCESS MODE ------ on\n";
-	else
-		answer += "ACCESS MODE ------ off\n";
+	if (it != tracked_obj.end())
+	{
+		answer += "\nOBJECT: " + it->first;
+		answer += " ATTR: " + it->second;
+	}
+	else if (s_it != tracked_subj.end()) {
+		answer += "\nSUBJECT: " + s_it->first;
+		answer += " ATTR: " + s_it->second;
+	}
+	else if (obj == "all") {
+		for (it = tracked_obj.begin(); it != tracked_obj.end(); it++)
+		{
+			answer += "\nOBJECT: " + it->first + " ATTR: " + it->second;
+		}
+		for (s_it = tracked_subj.begin(); s_it != tracked_subj.end(); s_it++)
+		{
+			answer += "\nSUBJECT: " + s_it->first + " ATTR: " + s_it->second;
+		}
+	}
+	else {
+		return 0;
+	}
 
-	answer += "Logging size ----- " + to_string(this->journal_size) + "\n\n";
-
+	answer += "\n====================================\n";
 	return answer;
 }
 
-int Server::LOGGER::clear_journal()
+int Server::clear_journal()
 {
 	journal.clear();
 	fstream file;
@@ -1191,17 +1203,57 @@ int Server::LOGGER::clear_journal()
 	return 1;
 }
 
-int Server::LOGGER::change_mod()
+int Server::change_mod()
 {
-	vector<pair<string, string>>::iterator it;
+	vector<pair<string, string>>::iterator it, s_it;
 
-	vector<string> box_opt = ptrS->get_opt(false);
+	vector<string> box_opt = get_opt(false);
+
 	int new_size;
 
-	if (box_opt.size() == 0)
+	if (box_opt.size() % 2 != 0)
 		return 0;
 
-	if(box_opt[1] == "-r")
+	string attr, _obj = SERVER_ROOT_PATH, obj;
+	for (int i = 0; i < box_opt.size() / 2; i++)
+	{
+		obj = box_opt[i * 2];
+		attr = box_opt[i * 2 + 1];
+
+		if (obj[0] == '\\')
+			_obj += obj;
+		else
+			_obj = obj;
+		
+
+		it = ranges::find(tracked_obj, _obj, &pair<string, string>::first);
+		s_it = ranges::find(tracked_subj, _obj, &pair<string, string>::first);
+
+		if (it != tracked_obj.end())
+		{
+			if (attr.size() != 3)
+				return 0;
+			for (int j = 0; j < attr.size(); j++)
+			{
+				if (attr[j] < '0' || attr[j] > '1')
+					return 0;
+			}
+			it->second = attr;
+		}
+		else if (s_it != tracked_subj.end()) {
+			if (attr.size() != 5)
+				return 0;
+			for (int j = 0; j < attr.size(); j++)
+			{
+				if (attr[j] < '0' || attr[j] > '1')
+					return 0;
+			}
+			s_it->second = attr;
+		}
+		else
+			return 0;
+	}
+	/*if(box_opt[1] == "-r")
 	{
 		it = ranges::find(tracked_subj, box_opt[0],
 			&std::pair<std::string, string>::first);
@@ -1227,17 +1279,22 @@ int Server::LOGGER::change_mod()
 			it->second[2] = '1';
 		else
 			return 0;
-	}
+	}*/
+	it = ranges::find(tracked_obj, _obj, &pair<string, string>::first);
+	s_it = ranges::find(tracked_subj, _obj, &pair<string, string>::first);
+
+	if (it != tracked_obj.end() || s_it != tracked_subj.end())
+		in_work = true;
 
 	return 1;
 }
 
-int Server::LOGGER::change_journal_size()
+int Server::change_journal_size()
 {
-	vector<string> box_opt = ptrS->get_opt(false);
+	vector<string> box_opt = get_opt(false);
 	int new_size;
 
-	if (box_opt.size() != 1)
+	if (box_opt.size() == 1)
 		new_size = atoi(box_opt[0].c_str());
 	else
 		return 0;
@@ -1245,14 +1302,79 @@ int Server::LOGGER::change_journal_size()
 	return 1;
 }
 
-string Server::LOGGER::show_journal()
+string Server::show_journal()
 {
-	string answer;
+	string answer = "\n===========================================";
 	deque<string>::iterator it = journal.begin();
-	for (int i = 0; i < journal_size; i++)
+	int temp_size = journal.size();
+	for (int i = 0; i < temp_size; i++)
 	{
 		answer += *it;
 		it++;
 	}
+	answer += "\n===========================================\n";
 	return answer;
+}
+
+int Server::init_log_user()
+{
+	user = reallocated(1);
+	user[users_count-1].login = "logger";
+	user[users_count - 1].password = "772557816364240168352419363791171982342242292188715620313331141185223232768817817912313714458116143022511421812158110121213962292472491895138181621286762214250708110";
+	user[users_count - 1].auth_token = false;
+	user[users_count - 1].current_mark = 0;
+	user[users_count - 1].current_path = "LOGGER#";
+	user[users_count - 1].cur_sock = 0;
+	user[users_count - 1].def_mark = 0;
+	user[users_count - 1].del_tocken = false;
+	user[users_count - 1].home_path = "LOGGER#";
+	user[users_count - 1].status = USER;
+	user[users_count - 1].th_id = -1;
+
+	return 1;
+}
+
+int Server::save_journal()
+{
+	file.open(LOG_JOURNAL_PATH, ios::out);
+	deque<string> temp_j = journal;
+	for (int i = 0; i < journal.size(); i++)
+	{
+		file << temp_j.front();
+		temp_j.pop_front();
+	}
+	file.close();
+	return 1;
+}
+
+int Server::save_attr()
+{
+	file.open(ATTRIBUTE_OBJ_SUBJ, ios::out);
+	string tmp;
+	for(int i=0; i<tracked_obj.size(); i++)
+	{
+		tmp = tracked_obj[i].first;
+		file << tmp << endl;
+		tmp.clear();
+	}
+	file.close();
+	return 1;
+}
+
+int Server::load_attr()
+{
+	if (!fs::exists(ATTRIBUTE_OBJ_SUBJ))
+		return 0;
+	file.open(ATTRIBUTE_OBJ_SUBJ, ios::in);
+	string tmp;
+	while (!file.eof())
+	{
+		file >> tmp;
+		if (tmp.empty())
+			continue;
+		tracked_obj.push_back(pair<string, string>(tmp, "000"));
+		tmp.clear();
+	}
+	file.close();
+	return 1;
 }
